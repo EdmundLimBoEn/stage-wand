@@ -1,13 +1,19 @@
 # HUMANS.md
 
-Things only Edmund can do for the Stage Wand build day.
+Physical setup and acceptance checks for Stage Wand. Start with [README.md](README.md); leave checks unticked until verified on the actual devices.
 
 - [x] Approve `docs/DESIGN.md` and `PLAN.md` before Wave 0 starts
-- [ ] Paste `PLAN.md` into a fresh Fable 5.1 or Astra chat opened in this folder and say: "You are the coordinator. Execute PLAN.md."
-- [ ] During Wave 1: open `ios/StageWand.xcodeproj` in Xcode, plug in the iPhone 13 Pro Max, Run the stub app once on the device; tap Trust for the developer profile; tap Allow on the Local Network prompt
-- [ ] Grant Accessibility to `StageWandMac.app` when prompted; expect a re-prompt after each rebuild
-- [ ] Click Allow on the macOS firewall "accept incoming connections" prompt at first bind
-- [ ] Type the 4-digit pairing code from the Mac menu bar into the phone's Settings once
-- [ ] Put both devices on the same Wi-Fi, or turn on the iPhone hotspot and join it from the Mac
-- [ ] Enable Mission Control shortcuts (Ctrl+←/→/↑) in System Settings → Keyboard → Shortcuts so 3-finger swipes work
-- [ ] Keep a Keynote deck open for every test; make sure phone volume is not at max or min before the pocket test
+- [ ] Generate the iOS project, connect the iPhone, select team `DUU8J39BA7`, and Run StageWand from Xcode. Enable Developer Mode and Trust developer if requested.
+- [ ] Allow Local Network access on the phone.
+- [ ] Build and launch `StageWandMac.app`; grant Accessibility. Re-grant after rebuilding if macOS invalidates the permission.
+- [ ] Click Allow on the macOS firewall incoming-connections prompt.
+- [ ] Put both devices on the same Wi-Fi, or enable the iPhone hotspot and join it from the Mac.
+- [ ] Type the current four-digit Mac pairing code into phone Settings and verify authentication.
+- [ ] Enable Mission Control shortcuts (Control+Left/Right/Up) and create a second desktop.
+- [ ] Start a Keynote slideshow and set phone media volume away from maximum/minimum.
+- [ ] Run the locked pocket test on the physical phone: volume up advances and volume down goes back with ARM off. Record counts and any missing haptics.
+- [ ] Verify unlocked ARM controls: pointer, left/right click, scrolling, three-finger swipes, and keyboard buttons.
+- [ ] Verify lock/unlock keeps or recovers the connection; re-enable ARM for pointer control.
+- [ ] Verify Kick disconnects the phone and rotates the code; pair again with the new code.
+- [ ] Verify hotspot fallback, including Manual Host with the current Mac IP and popover port if discovery fails.
+- [ ] Complete [scripts/rehearse.md](scripts/rehearse.md), record failures or fallbacks, and avoid rebuilding before the presentation.
