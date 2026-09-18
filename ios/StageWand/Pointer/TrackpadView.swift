@@ -33,6 +33,7 @@ struct TrackpadView: UIViewRepresentable {
         private var movement = CGPoint.zero
         private var scrolling = CGPoint.zero
         private var displayLink: CADisplayLink?
+        private var isPanning = false
 
         init(_ configuration: TrackpadView) {
             self.configuration = configuration
@@ -82,16 +83,23 @@ struct TrackpadView: UIViewRepresentable {
         }
 
         private func clear() {
+            isPanning = false
             movement = .zero
             scrolling = .zero
             displayLink?.isPaused = true
         }
 
         @objc private func pan(_ recognizer: UIPanGestureRecognizer) {
+            if recognizer.state == .cancelled || recognizer.state == .failed {
+                isPanning = false
+                flush()
+                return
+            }
             let delta = recognizer.translation(in: recognizer.view)
             recognizer.setTranslation(.zero, in: recognizer.view)
             guard configuration.armed,
                   [.began, .changed, .ended].contains(recognizer.state) else { return }
+            isPanning = recognizer.state != .ended
             let scale = 2.0 * configuration.sensitivity
             let dx = delta.x * scale
             let dy = delta.y * scale
@@ -106,6 +114,7 @@ struct TrackpadView: UIViewRepresentable {
                 scrolling = next
             }
             displayLink?.isPaused = false
+            if recognizer.state == .ended { flush() }
         }
 
         @objc private func tap(_ recognizer: UITapGestureRecognizer) {
@@ -131,7 +140,9 @@ struct TrackpadView: UIViewRepresentable {
             guard configuration.armed else { clear(); return }
             let move = movement
             let scroll = scrolling
-            clear()
+            movement = .zero
+            scrolling = .zero
+            if !isPanning { displayLink?.isPaused = true }
             // Split large deltas to honor the wire limit without discarding distance.
             var remaining = move
             while remaining != .zero {

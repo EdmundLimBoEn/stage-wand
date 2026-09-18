@@ -162,7 +162,7 @@ struct ContentView: View {
         case .searching: "Searching for your Mac…"
         case .connecting(let host): "Connecting to \(link.macName ?? host)…"
         case .enterCode: "Enter code · \(link.macName ?? "Mac")"
-        case .authed: "Connected · \(link.macName ?? "Mac")"
+        case .authed: "\(link.route) · \(link.macName ?? "Mac")"
         case .disconnected: touchLocked ? "Disconnected · Unlock to reconnect" : "Disconnected · Tap to reconnect"
         case .localNetworkDenied: "Local network denied, fix in Settings"
         }
@@ -194,7 +194,8 @@ struct ContentView: View {
         link.send(command)
         switch command {
         case .key, .click, .chord: Haptics.tick()
-        case .move, .scroll, .auth: break
+        case .move, .scroll: Haptics.motion()
+        case .auth: break
         }
     }
 }

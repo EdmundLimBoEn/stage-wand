@@ -11,6 +11,7 @@ final class Session: ObservableObject {
     @Published var startupError: String?
     @Published var tunnelURL: String?
     var server: Server?
+    var bluetooth: BluetoothServer?
     private var refreshTimer: Timer?
 
     init() {
@@ -29,6 +30,7 @@ final class Session: ObservableObject {
     func kick() {
         rotateCode()
         server?.kick()
+        bluetooth?.kick()
         peer = nil
     }
 

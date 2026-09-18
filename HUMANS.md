@@ -30,3 +30,9 @@ Physical setup and acceptance checks for Stage Wand. Start with [README.md](READ
 - [ ] Verify keys and locked volume presses over the tunnel; keep the tunnel runner and Mac app running.
 
 - [ ] With Wi-Fi and Bluetooth enabled, choose Use nearby Mac (low latency), pair with the displayed code, and compare cursor response. If discovery fails, join the iPhone Personal Hotspot and retry direct mode.
+
+- [ ] Relaunch `~/Applications/StageWandMac.app` and click Allow on the macOS Bluetooth prompt. Reinstall the phone app, open Settings, choose Bluetooth direct, and allow Bluetooth on the phone when asked.
+- [ ] With Bluetooth direct selected, pair with the displayed code and confirm the status pill reads `Bluetooth · <Mac name>`. Move the cursor for 30 seconds: expect steady motion with no pause/burst. Record the result.
+- [ ] If Bluetooth direct will not pair within 15 seconds, switch to Wi‑Fi nearby or join the iPhone Personal Hotspot from the Mac and retry; record which route you presented with.
+- [ ] Retest sustained trackpad movement on Wi‑Fi nearby only if Bluetooth direct is unavailable; report any pause/burst behavior and the displayed route.
+- [ ] For a USB comparison, enable iPhone Personal Hotspot, connect a data cable and trust the Mac. Confirm iPhone USB is active in Mac Network settings, then enter the Mac's USB-interface IP and Stage Wand port in Manual Host. Verify pairing, pointer movement, and locked volume/haptics separately.

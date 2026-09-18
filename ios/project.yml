@@ -30,6 +30,7 @@ targets:
         UILaunchScreen: {}
         UIBackgroundModes: [audio]
         NSLocalNetworkUsageDescription: Connect to your Mac to control presentations and the pointer.
+        NSBluetoothAlwaysUsageDescription: Connect directly to your Mac over Bluetooth for low-latency pointer control.
         NSBonjourServices: [_stagewand._tcp]
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

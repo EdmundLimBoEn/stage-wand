@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage("pairingCode") private var pairingCode: String = ""
     @AppStorage("manualHost") private var manualHost: String = ""
     @AppStorage("pointerMode") private var pointerMode: String = "trackpad"
+    @AppStorage("transport") private var transport: String = "bluetooth"
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -31,8 +32,13 @@ struct SettingsView: View {
                         .accessibilityLabel("Pointer sensitivity")
                 }
                 Section("Pairing") {
-                    SwiftUI.Button("Use nearby Mac (low latency)") { manualHost = "" }
-                    Text("Keep Wi-Fi and Bluetooth on on both devices. Nearby mode can connect directly without a shared router when peer-to-peer Wi-Fi is available.")
+                    Picker("Connection", selection: $transport) {
+                        Text("Bluetooth direct").tag("bluetooth")
+                        Text("Wi‑Fi nearby").tag("wifi")
+                    }
+                    .pickerStyle(.segmented)
+                    SwiftUI.Button("Use direct connection (clear tunnel URL)") { manualHost = "" }
+                    Text("Bluetooth direct needs no Wi‑Fi and is the smoothest for the pointer. Wi‑Fi nearby uses your network or Apple peer-to-peer Wi‑Fi. Allow Bluetooth on both devices when asked.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     TextField("Pairing code", text: $pairingCode)

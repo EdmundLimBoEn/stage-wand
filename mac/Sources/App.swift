@@ -12,11 +12,12 @@ struct StageWandApp: App {
         print("NSApp.activationPolicy() == .accessory: \(NSApp.activationPolicy() == .accessory)")
         let session = Session()
         let server = Server(session: session) { command in
-            Task { @MainActor in
-                Input.apply(command)
-            }
+            Input.apply(command)
         }
         session.server = server
+        let bluetooth = BluetoothServer(session: session) { Input.apply($0) }
+        session.bluetooth = bluetooth
+        bluetooth.start()
         do {
             session.port = try server.start()
         } catch {
@@ -88,9 +89,9 @@ private struct PairingWindow: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 PairingDetails(session: session)
-                Text("Nearby Mac · low latency")
+                Text("Bluetooth direct · smoothest pointer")
                     .font(.headline)
-                Text("Keep Wi-Fi and Bluetooth on for both devices. On your phone, draw a square to unlock Stage Wand, choose Use nearby Mac in Settings, then enter the pairing code above. A tunnel is optional.")
+                Text("Keep Bluetooth on for both devices. On your phone, draw a square to unlock Stage Wand, choose Bluetooth direct in Settings, allow Bluetooth when asked, then enter the pairing code above. Wi‑Fi nearby and the tunnel remain available in Settings.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 if let tunnelURL = session.tunnelURL {

@@ -25,7 +25,7 @@ In Xcode, select the **StageWand** scheme and your connected iPhone, check autom
 
 ## First connection
 
-1. Keep Wi-Fi and Bluetooth enabled on both devices. In phone Settings, choose **Use nearby Mac (low latency)** to clear the tunnel override and enable local/Apple peer-to-peer discovery. If discovery fails on the venue network, enable Personal Hotspot on the iPhone and join it from the Mac.
+1. Keep Bluetooth enabled on both devices. Allow Bluetooth for StageWandMac when macOS asks on first launch. In phone Settings, choose **Bluetooth direct** (the default) and allow Bluetooth when iOS asks. No Wi‑Fi is needed for this route. **Wi‑Fi nearby** uses your network or Apple peer-to-peer Wi‑Fi instead; if that fails on the venue network, enable Personal Hotspot on the iPhone and join it from the Mac.
 2. On the Mac, allow StageWandMac in **System Settings → Privacy & Security → Accessibility**. If an old ad-hoc build was granted access, remove that old entry, add `~/Applications/StageWandMac.app`, enable it, and relaunch. The development-certificate signature now stays stable across rebuilds.
 3. Choose **Allow** when the macOS firewall asks about incoming connections.
 4. Allow **Local Network** access on the phone. If denied, enable Stage Wand in **Settings → Privacy & Security → Local Network** and reopen the app.
@@ -53,6 +53,7 @@ The phone plays a silent audio loop to support pocket operation. Volume recenter
 
 | Symptom | What to check |
 | --- | --- |
+| Bluetooth direct stays on Connecting | Check Bluetooth is on for both devices, that StageWandMac is allowed under **System Settings → Privacy & Security → Bluetooth**, and that Stage Wand is allowed under phone **Settings → Privacy & Security → Bluetooth**. Relaunch the Mac app after granting. Only one Stage Wand Mac should be advertising nearby. Fall back to Wi‑Fi nearby or the hotspot if it still fails. |
 | No Mac appears through Bonjour | Check Local Network permission and the shared network. In phone Settings, enter the Mac's Wi-Fi IP address in Manual Host, such as `192.168.1.20:8787`, substituting the actual IP and popover port. A host without a port uses 8787. Find the IP in the Mac's Wi-Fi network details. Discovery uses `_stagewand._tcp`. |
 | Manual connection also fails | Check the popover port and firewall permission. Guest Wi-Fi may isolate clients; use the iPhone hotspot fallback. Update or clear Manual Host after changing networks. |
 | Connected but the Mac ignores input | Ensure the signed app in `~/Applications` is the enabled Accessibility entry, draw the square to unlock touch controls, and put the intended Mac app frontmost. |
@@ -100,6 +101,8 @@ The tunnel URL contains a random 256-bit secret path, checked before traffic rea
 
 ## Cursor latency
 
-Use **Settings → Use nearby Mac (low latency)** for trackpad control. This opts into Apple peer-to-peer Wi-Fi through Network.framework and avoids the Cloudflare round trip when a direct path is available. Wi-Fi and Bluetooth should be enabled on both devices. See [Apple’s peer-to-peer networking guidance](https://developer.apple.com/documentation/technotes/tn3213-moving-from-multipeer-connectivity-to-network-framework).
+Use **Settings → Bluetooth direct** for trackpad control. The phone connects to the Mac over Bluetooth LE as a GATT central; the Mac advertises a Stage Wand service and receives commands as write-without-response packets. This route does not depend on Wi‑Fi, a router, or the venue network, and it avoids Apple peer-to-peer Wi‑Fi (AWDL), which time-slices the radio and produces the stop-start cursor motion seen in Wi‑Fi nearby mode when no shared network is available. Expect roughly 30 ms update cadence, which is what the BLE connection interval allows between two Apple devices.
 
-The app coalesces pending movement without losing distance, uses TCP no-delay for direct connections, and gives haptics only for discrete buttons/clicks rather than every pointer update. Cloudflare remains available when direct connectivity is unavailable; its latency depends on the Internet route. Nearby wireless behavior must be checked on the actual phone and Mac.
+**Wi‑Fi nearby** remains available and is smoothest when both devices share the same Wi‑Fi or the iPhone Personal Hotspot. Cloudflare remains available when neither direct route works; its latency depends on the Internet route.
+
+The app coalesces pending movement without losing distance, applies back-pressure on the Bluetooth link so bursts merge instead of queueing, uses TCP no-delay for Wi‑Fi connections, and gives light haptics for pointer motion. The Bluetooth characteristics are unencrypted; the four-digit pairing code remains the access control, as it is for the plain-WebSocket Wi‑Fi route.

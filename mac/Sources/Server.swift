@@ -13,13 +13,13 @@ import Network
     }
 
     private let session: Session
-    private let onCommand: @Sendable (Command) -> Void
+    private let onCommand: @MainActor @Sendable (Command) -> Void
     private let queue = DispatchQueue(label: "systems.edmundlim.stagewand.server")
     private var listener: NWListener?
     private var peers: [UUID: Peer] = [:]
     private var active: UUID?
 
-    init(session: Session, onCommand: @escaping @Sendable (Command) -> Void) {
+    init(session: Session, onCommand: @escaping @MainActor @Sendable (Command) -> Void) {
         self.session = session
         self.onCommand = onCommand
     }

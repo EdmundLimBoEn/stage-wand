@@ -9,16 +9,19 @@ final class Link: ObservableObject {
     }
     @Published var state: State = .searching
     @Published var macName: String?
+    @Published private(set) var route = "Nearby"
     private let discovery = Discovery()
     @MainActor
     private enum Transport {
         case remote(URLSessionWebSocketTask)
         case nearby(LocalSocket)
+        case bluetooth(BluetoothClient)
 
         func send(_ data: Data) async throws {
             switch self {
             case .remote(let socket): try await socket.send(.string(String(decoding: data, as: UTF8.self)))
             case .nearby(let socket): try await socket.send(data)
+            case .bluetooth(let client): try await client.send(data)
             }
         }
 
@@ -31,6 +34,7 @@ final class Link: ObservableObject {
                 @unknown default: throw CancellationError()
                 }
             case .nearby(let socket): return try await socket.receive()
+            case .bluetooth(let client): return try await client.receive()
             }
         }
 
@@ -38,23 +42,23 @@ final class Link: ObservableObject {
             switch self {
             case .remote(let socket): socket.cancel(with: .goingAway, reason: nil)
             case .nearby(let socket): socket.cancel()
+            case .bluetooth(let client): client.cancel()
             }
         }
     }
     private var socket: Transport?
     private var receiveTask: Task<Void, Never>?
     private var sendTask: Task<Void, Never>?
-    private var ticker: Task<Void, Never>?
     private var retryTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
     private var defaultsObserver: AnyCancellable?
     private var generation = UUID()
+    private let bluetooth = BluetoothClient()
     private var code = ""
     private var host = ""
+    private var transport = "bluetooth"
     private var buffered: [Command] = []
     private var outgoing = CommandQueue()
-    private var move = (x: 0.0, y: 0.0)
-    private var scroll = (x: 0.0, y: 0.0)
 
     func start() {
         discovery.onResults = { [weak self] in
@@ -72,33 +76,17 @@ final class Link: ObservableObject {
                     Task { @MainActor in self?.refreshSettings() }
                 }
         }
-        if ticker == nil {
-            ticker = Task { @MainActor [weak self] in
-                while !Task.isCancelled {
-                    do { try await Task.sleep(for: .milliseconds(16.666667)) } catch { return }
-                    self?.flushDeltas()
-                }
-            }
-        }
         refreshSettings(force: true)
     }
 
     func send(_ command: Command) {
         switch command {
         case .auth: return
-        case .move(let dx, let dy):
-            guard state == .authed, dx.isFinite, dy.isFinite,
-                  (move.x + dx).isFinite, (move.y + dy).isFinite else { return }
-            move.x += dx
-            move.y += dy
-        case .scroll(let dx, let dy):
-            guard state == .authed, dx.isFinite, dy.isFinite,
-                  (scroll.x + dx).isFinite, (scroll.y + dy).isFinite else { return }
-            scroll.x += dx
-            scroll.y += dy
+        case .move(let dx, let dy), .scroll(let dx, let dy):
+            guard state == .authed, dx.isFinite, dy.isFinite else { return }
+            if dx != 0 || dy != 0 { enqueue(command) }
         case .key, .click, .chord:
             if state == .authed {
-                flushDeltas()
                 enqueue(command)
             } else {
                 if buffered.count == 8 { buffered.removeFirst() }
@@ -111,9 +99,11 @@ final class Link: ObservableObject {
         let newCode = UserDefaults.standard.string(forKey: "pairingCode") ?? ""
         let newHost = (UserDefaults.standard.string(forKey: "manualHost") ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard force || newCode != code || newHost != host else { return }
+        let newTransport = UserDefaults.standard.string(forKey: "transport") ?? "bluetooth"
+        guard force || newCode != code || newHost != host || newTransport != transport else { return }
         code = newCode
         host = newHost
+        transport = newTransport
         resetConnection()
         state = code.isEmpty ? .enterCode : .searching
         if !code.isEmpty { connect() }
@@ -130,9 +120,18 @@ final class Link: ObservableObject {
             open(url)
             return
         }
+        if transport == "bluetooth" {
+            route = "Bluetooth"
+            macName = nil
+            bluetooth.onName = { [weak self] in self?.macName = $0 }
+            state = .connecting("Mac")
+            begin(.bluetooth(bluetooth))
+            return
+        }
         discovery.start()
         guard let result = discovery.results.first else { state = .searching; return }
         macName = result.name
+        route = "Nearby"
         state = .connecting(result.name)
         let id = generation
         armTimeout(id)
@@ -145,6 +144,12 @@ final class Link: ObservableObject {
 
     private func open(_ url: URL) {
         state = .connecting(macName ?? url.host ?? "Mac")
+        if url.scheme == "ws" {
+            route = "Direct"
+            begin(.nearby(LocalSocket(url: url)))
+            return
+        }
+        route = "Secure link"
         let socket = URLSession.shared.webSocketTask(with: url)
         socket.resume()
         begin(.remote(socket))
@@ -202,18 +207,6 @@ final class Link: ObservableObject {
         }
     }
 
-    private func flushDeltas() {
-        guard state == .authed else { return }
-        if move.x != 0 || move.y != 0 {
-            enqueue(.move(dx: move.x, dy: move.y))
-            move = (0, 0)
-        }
-        if scroll.x != 0 || scroll.y != 0 {
-            enqueue(.scroll(dx: scroll.x, dy: scroll.y))
-            scroll = (0, 0)
-        }
-    }
-
     private func armTimeout(_ id: UUID) {
         timeoutTask?.cancel()
         timeoutTask = Task { @MainActor [weak self] in
@@ -243,7 +236,5 @@ final class Link: ObservableObject {
         socket = nil
         sendTask = nil
         outgoing.removeAll()
-        move = (0, 0)
-        scroll = (0, 0)
     }
 }

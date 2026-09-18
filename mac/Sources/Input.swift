@@ -1,16 +1,22 @@
+import AppKit
 import ApplicationServices
 import Foundation
 
 @MainActor
 enum Input {
+    private static var cursor = CursorPositionTracker()
+    private static var cachedDisplayBounds: CGRect?
+    private static var displayObserver: (any NSObjectProtocol)?
+
     static func apply(_ c: Command) {
         switch c {
         case .auth:
             break
         case .move(let dx, let dy):
             guard dx.isFinite, dy.isFinite,
-                  let current = CGEvent(source: nil)?.location,
+                  let observed = CGEvent(source: nil)?.location,
                   let bounds = displayBounds() else { return }
+            let current = cursor.reconcile(observed)
             let point = CGPoint(
                 x: min(max(current.x + dx, bounds.minX), bounds.maxX - 1),
                 y: min(max(current.y + dy, bounds.minY), bounds.maxY - 1)
@@ -20,8 +26,10 @@ enum Input {
             event.setDoubleValueField(.mouseEventDeltaX, value: point.x - current.x)
             event.setDoubleValueField(.mouseEventDeltaY, value: point.y - current.y)
             event.post(tap: .cghidEventTap)
+            cursor.didPost(point)
         case .click(let button):
-            guard let point = CGEvent(source: nil)?.location else { return }
+            guard let observed = CGEvent(source: nil)?.location else { return }
+            let point = cursor.reconcile(observed)
             let mouseButton: CGMouseButton = button == .left ? .left : .right
             let down: CGEventType = button == .left ? .leftMouseDown : .rightMouseDown
             let up: CGEventType = button == .left ? .leftMouseUp : .rightMouseUp
@@ -101,11 +109,55 @@ enum Input {
     }
 
     private static func displayBounds() -> CGRect? {
+        if displayObserver == nil {
+            displayObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification,
+                object: nil, queue: .main
+            ) { _ in
+                Task { @MainActor in
+                    cachedDisplayBounds = nil
+                    cursor = CursorPositionTracker()
+                }
+            }
+        }
+        if let cachedDisplayBounds { return cachedDisplayBounds }
         var count: UInt32 = 0
         guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return nil }
         var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
         guard CGGetActiveDisplayList(count, &displays, &count) == .success else { return nil }
         let bounds = displays.prefix(Int(count)).reduce(CGRect.null) { $0.union(CGDisplayBounds($1)) }
-        return bounds.isNull || bounds.isEmpty ? nil : bounds
+        cachedDisplayBounds = bounds.isNull || bounds.isEmpty ? nil : bounds
+        return cachedDisplayBounds
+    }
+}
+
+struct CursorPositionTracker {
+    private var lastObserved: CGPoint?
+    private var pending: [CGPoint] = []
+    private var lastPostedAt: ContinuousClock.Instant?
+
+    mutating func reconcile(_ observed: CGPoint, now: ContinuousClock.Instant = .now) -> CGPoint {
+        if let lastPostedAt, lastPostedAt.duration(to: now) > .milliseconds(250) {
+            pending.removeAll(keepingCapacity: true)
+        }
+        // Posted events apply asynchronously; retain deltas until the OS catches up.
+        if let index = pending.lastIndex(where: { matches($0, observed) }) {
+            pending.removeFirst(index + 1)
+        } else if let lastObserved, !matches(lastObserved, observed) {
+            // An unrecognized position comes from the physical mouse or another app.
+            pending.removeAll(keepingCapacity: true)
+        }
+        lastObserved = observed
+        return pending.last ?? observed
+    }
+
+    mutating func didPost(_ point: CGPoint, now: ContinuousClock.Instant = .now) {
+        lastPostedAt = now
+        pending.append(point)
+        if pending.count > 256 { pending.removeFirst(pending.count - 256) }
+    }
+
+    private func matches(_ lhs: CGPoint, _ rhs: CGPoint) -> Bool {
+        abs(lhs.x - rhs.x) < 0.000001 && abs(lhs.y - rhs.y) < 0.000001
     }
 }
