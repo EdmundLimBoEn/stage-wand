@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Stage Wand — 60-minute build plan</title>
+  <style>
+
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+.display.math{display: block; text-align: center; margin: 0.5rem auto;}
+
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+  <style type="text/css">body{max-width:960px;margin:40px auto;padding:0 20px;font:16px/1.55 -apple-system,system-ui,sans-serif;color:#1d1d1f;background:#fff}
+h1{font-size:30px;margin-bottom:4px}h2{margin-top:40px;border-bottom:1px solid #e5e5ea;padding-bottom:6px}
+code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f2f2f7;padding:1px 5px;border-radius:4px}
+pre{background:#f2f2f7;padding:14px;border-radius:8px;overflow:auto}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;font-size:14px}th,td{border:1px solid #e5e5ea;padding:8px;vertical-align:top;text-align:left}th{background:#f2f2f7}
+li{margin:3px 0}strong{color:#000}input[type=checkbox]{margin-right:6px}
+</style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Stage Wand — 60-minute build plan</h1>
+</header>
+<h1 id="planmd--stage-wand-60-minute-all-native-build">PLAN.md — Stage
+Wand, 60-minute all-native build</h1>
+<p>Status: APPROVED by Edmund 2026-09-18. Execute as written.</p>
+<p><strong>Hand this file to a coordinator chat (Fable 5.1 or Astra). It
+is self-contained.</strong> Rationale, ADRs, and review history live in
+<code>docs/DESIGN.md</code>; you do not need them to build.</p>
+<h2 id="what-we-are-building">What we are building</h2>
+<p>iPhone app + macOS menu-bar app, both native Swift, talking over LAN
+WebSocket found via Bonjour.</p>
+<ul>
+<li><strong>Pocket clicker:</strong> with the iPhone locked, volume up =
+Right arrow, volume down = Left arrow, sent to the frontmost Mac app
+(Keynote). Haptic on each press. Works because background audio keeps
+the app process and its WebSocket alive through lock.</li>
+<li><strong>Trackpad mode (unlocked, ARM on):</strong> 1-finger pan
+moves the real cursor, tap = left click, 2-finger tap = right click,
+2-finger pan = scroll, 3-finger swipe left/right/up = Ctrl+←/→/↑ (switch
+spaces / Mission Control).</li>
+<li><strong>Keys:</strong> ← → Esc buttons, L / R click buttons, big
+NEXT / PREV.</li>
+<li><strong>Pairing:</strong> 4-digit code shown on the Mac; typed once
+into the phone&#39;s Settings, remembered. A valid code always displaces the
+current phone. Kick rotates the code.</li>
+<li><strong>Stretch only if Wave 2 is done by minute 45:</strong>
+joystick mode, then gyro hold-to-aim mode.</li>
+</ul>
+<h2 id="coordinator-rules">Coordinator rules</h2>
+<ul>
+<li>You are the coordinator. You write the scaffold and the integration.
+You never write the hard files yourself; you dispatch, review diffs, run
+checks, commit.</li>
+<li>Dispatch Wave 1 as ONE burst of 8. If the harness throws overload
+errors, fall back to two bursts of 4 (rows 2,4,5,6 then 1,3,7,8). One
+owner per file; nobody edits another row&#39;s files. Bugs go back to the
+owner with the exact failing output pasted in.</li>
+<li>Astra = <code>codex exec -m gpt-6-astra</code>. Effort:
+<code>high</code> for the volume observer only, <code>medium</code> for
+the Mac server and trackpad, <code>low</code> for everything else. Fable
+subagents (model <code>fable</code>) take shell, UI, docs.</li>
+<li>Every agent prompt = the &quot;Frozen contract&quot; section below + that
+agent&#39;s row + this line: &quot;Only edit the files you own. Ship your check.
+No comments unless the why is non-obvious. Reply with the files changed
+and the check output.&quot;</li>
+<li>Timebox is hard. At minute 45 stop adding and start rehearsing. Cut
+order if late: 3-finger chords → volume reset attempt (accept the
+at-limit dead zone) → volume clicker (NEXT/PREV buttons remain).</li>
+</ul>
+<h2 id="frozen-contract-write-in-wave-0-never-change-after-minute-8">Frozen
+contract (write in Wave 0, never change after minute 8)</h2>
+<p>Port 8787 (fallback 8788-8790, shown in the Mac popover). Bonjour
+type <code>_stagewand._tcp</code>. Mac target macOS 14, iOS target 17.
+Team <code>U968QPQQ67</code>, bundle ids
+<code>systems.edmundlim.stagewand</code> (iOS) and
+<code>systems.edmundlim.stagewand.mac</code>. Repo root = this folder,
+flat layout:</p>
+<pre><code>Shared/Protocol.swift              # ONLY protocol source. mac/Sources/Protocol.swift is a symlink to it (SwiftPM cannot reference ../Shared); ios/project.yml lists ../Shared as a source path.
+mac/Package.swift                  # executableTarget StageWandMac, macOS 14
+mac/Sources/{Entry,App,Session,Server,Input}.swift
+mac/Makefile                       # `make app`: swift build -c release, then wraps the binary in StageWandMac.app (Info.plist with CFBundleIdentifier, LSUIElement=true) so TCC and the firewall key on a bundle id, not a path
+ios/project.yml                    # XcodeGen; target StageWand; UIBackgroundModes [audio]; NSLocalNetworkUsageDescription; NSBonjourServices [_stagewand._tcp]; NSAppTransportSecurity.NSAllowsLocalNetworking true (IP literals are exempt from ATS anyway); automatic signing team U968QPQQ67
+ios/StageWand/{StageWandApp,ContentView,SettingsView,Link,Discovery,Volume,Haptics}.swift
+ios/StageWand/Pointer/TrackpadView.swift
+ios/StageWand/Resources/silence.wav     # 2 s of zeros, generated in Wave 0: python3 -c &quot;import wave;w=wave.open(&#39;ios/StageWand/Resources/silence.wav&#39;,&#39;w&#39;);w.setnchannels(1);w.setsampwidth(2);w.setframerate(44100);w.writeframes(b&#39;\0&#39;*176400);w.close()&quot;
+scripts/ws-smoke.ts  scripts/rehearse.md  README.md  HUMANS.md</code></pre>
+<p><code>Shared/Protocol.swift</code> (coordinator writes it complete in
+Wave 0, with hand-written <code>Codable</code> for both enums):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode swift"><code class="sourceCode swift"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="kw">enum</span> Command<span class="op">:</span> <span class="dt">Equatable</span> <span class="op">{</span>                     <span class="co">// phone → Mac</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">case</span> auth<span class="op">(</span>code<span class="op">:</span> String<span class="op">)</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">case</span> move<span class="op">(</span>dx<span class="op">:</span> Double<span class="op">,</span> dy<span class="op">:</span> Double<span class="op">)</span>           <span class="co">// screen px, +x right, +y down, |d| ≤ 400</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>  <span class="cf">case</span> click<span class="op">(</span>Button<span class="op">)</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>  <span class="cf">case</span> scroll<span class="op">(</span>dx<span class="op">:</span> Double<span class="op">,</span> dy<span class="op">:</span> Double<span class="op">)</span>         <span class="co">// pixel units</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>  <span class="cf">case</span> key<span class="op">(</span>Key<span class="op">)</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>  <span class="cf">case</span> chord<span class="op">(</span>Chord<span class="op">)</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="kw">enum</span> Button<span class="op">:</span> <span class="dt">String</span><span class="op">,</span> <span class="dt">Codable</span> <span class="op">{</span> <span class="cf">case</span> left<span class="op">,</span> right <span class="op">}</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a><span class="kw">enum</span> Key<span class="op">:</span> <span class="dt">String</span><span class="op">,</span> <span class="dt">Codable</span> <span class="op">{</span> <span class="cf">case</span> left<span class="op">,</span> right<span class="op">,</span> esc <span class="op">}</span>                          <span class="co">// keycodes 123, 124, 53</span></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="kw">enum</span> Chord<span class="op">:</span> <span class="dt">String</span><span class="op">,</span> <span class="dt">Codable</span> <span class="op">{</span> <span class="cf">case</span> spaceLeft<span class="op">,</span> spaceRight<span class="op">,</span> missionControl <span class="op">}</span>   <span class="co">// Ctrl + 123 / 124 / 126</span></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a><span class="kw">enum</span> Reply<span class="op">:</span> <span class="dt">Equatable</span> <span class="op">{</span>                       <span class="co">// Mac → phone</span></span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>  <span class="cf">case</span> status</span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>  <span class="cf">case</span> bye<span class="op">(</span>reason<span class="op">:</span> String<span class="op">)</span>                    <span class="co">// kicked | displaced | badauth</span></span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Wire JSON, flat <code>t</code> discriminator:
+<code>{&quot;t&quot;:&quot;auth&quot;,&quot;code&quot;:&quot;4821&quot;}</code>
+<code>{&quot;t&quot;:&quot;move&quot;,&quot;dx&quot;:3.2,&quot;dy&quot;:-1}</code>
+<code>{&quot;t&quot;:&quot;click&quot;,&quot;b&quot;:&quot;left&quot;}</code>
+<code>{&quot;t&quot;:&quot;scroll&quot;,&quot;dx&quot;:0,&quot;dy&quot;:40}</code>
+<code>{&quot;t&quot;:&quot;key&quot;,&quot;k&quot;:&quot;esc&quot;}</code>
+<code>{&quot;t&quot;:&quot;chord&quot;,&quot;k&quot;:&quot;spaceRight&quot;}</code> <code>{&quot;t&quot;:&quot;status&quot;}</code>
+<code>{&quot;t&quot;:&quot;bye&quot;,&quot;reason&quot;:&quot;displaced&quot;}</code>. Rules: first frame must
+be <code>auth</code> within 2 s or the server closes. Wrong code →
+<code>bye badauth</code> + close. Valid code displaces the current peer
+(old one gets <code>bye displaced</code>). Server pings every 3 s and
+drops a peer after 6 s without pong. Phone accumulates
+<code>move</code>/<code>scroll</code> deltas and flushes the sum on a 60
+Hz timer (never drops distance). Non-finite numbers → drop frame.
+<strong>Volume presses send <code>key</code> unconditionally; ARM gates
+only move/click/scroll/chord.</strong> <code>Link</code> buffers up to 8
+<code>key</code>/<code>click</code>/<code>chord</code> commands while
+not <code>authed</code> and flushes them on <code>authed</code>.</p>
+<p>iOS <code>@AppStorage</code> keys (frozen; only these):
+<code>sensitivity: Double = 1.0</code> (0.5-3),
+<code>pairingCode: String = &quot;&quot;</code>,
+<code>manualHost: String = &quot;&quot;</code> (host or host:port),
+<code>pointerMode: String = &quot;trackpad&quot;</code>.</p>
+<p>Stubs (coordinator writes; bodies no-op so both builds are
+green):</p>
+<ul>
+<li>Mac <code>Entry.swift</code> (coordinator owns):
+<code>@main enum Entry { static func main() { if CommandLine.arguments.contains(&quot;--selftest&quot;) { Input.selfTest(); exit(0) }; if CommandLine.arguments.contains(&quot;--serve&quot;) { /* start Server headless with a fixed code &quot;0000&quot;, print port, RunLoop.main.run() */ }; StageWandApp.main() } }</code>.
+<code>App.swift</code> declares <code>struct StageWandApp: App</code>
+WITHOUT <code>@main</code>.</li>
+<li>Mac
+<code>@MainActor final class Session: ObservableObject { @Published var code: String; @Published var peer: String?; @Published var port: UInt16; @Published var axGranted: Bool; func rotateCode(); func kick() }</code></li>
+<li>Mac
+<code>final class Server { init(session: Session, onCommand: @escaping @Sendable (Command) -&gt; Void); func start() throws -&gt; UInt16; func kick() }</code>
+(Server hops to <code>MainActor</code> itself with
+<code>Task { @MainActor in }</code> before touching
+<code>session</code>; <code>onCommand</code> is called on the main
+actor.)</li>
+<li>Mac
+<code>enum Input { static func apply(_ c: Command); static func accessibilityGranted(prompt: Bool) -&gt; Bool; static func selfTest() }</code></li>
+<li>iOS
+<code>@MainActor final class Link: ObservableObject { enum State: Equatable { case searching, connecting(String), enterCode, authed, disconnected, localNetworkDenied }; @Published var state: State; @Published var macName: String?; func send(_ c: Command); func start() }</code></li>
+<li>iOS
+<code>enum PointerMode: String, CaseIterable { case trackpad }</code>
+(joystick / gyro cases only if a stretch lands)</li>
+<li>iOS
+<code>final class Volume { init(onUp: @escaping () -&gt; Void, onDown: @escaping () -&gt; Void); func start(); func stop(); var pressCount: Int }</code>
+Concurrency: Network callbacks arrive on dispatch queues; every
+<code>Session</code> / <code>Input</code> / <code>Link</code> touch hops
+to <code>MainActor</code> via <code>Task { @MainActor in }</code>. Swift
+6 strict concurrency is on; do not fight it with
+<code>@unchecked Sendable</code>.</li>
+</ul>
+<h2 id="wave-0--08-min--coordinator">Wave 0 · 0–8 min · Coordinator</h2>
+<ol type="1">
+<li><code>git init</code>. Write <code>mac/Package.swift</code>,
+<code>mac/Makefile</code>, <code>ios/project.yml</code>,
+<code>Shared/Protocol.swift</code> (complete), the symlink, all stubs,
+placeholder <code>ContentView</code>, <code>silence.wav</code>.</li>
+<li><code>cd mac &amp;&amp; swift build</code> green.
+<code>cd ios &amp;&amp; xcodegen &amp;&amp; xcodebuild -scheme StageWand -destination &#39;generic/platform=iOS Simulator&#39; build | tail -3</code>
+green.</li>
+<li><code>mkdir -p prompts .out</code>, one prompt file per Wave 1 row.
+Commit <code>scaffold</code>. Dispatch all rows.</li>
+<li><strong>Ask Edmund to open <code>ios/StageWand.xcodeproj</code> in
+Xcode now, plug in the iPhone, and Run the stub app once on the
+device</strong> (creates the personal-team profile, triggers &quot;Trust
+developer&quot; and the Local Network prompt). This runs in parallel with
+Wave 1 so Wave 2 only reinstalls. Get the UDID:
+<code>xcrun devicectl list devices</code>.</li>
+</ol>
+<h2 id="wave-1--835-min--parallel-one-agent-per-row">Wave 1 · 8–35 min ·
+parallel, one agent per row</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Agent</th>
+<th>Owns</th>
+<th>Deliverable</th>
+<th>Own check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Astra <strong>high</strong></td>
+<td><code>ios/StageWand/Volume.swift</code>,
+<code>ios/StageWand/Haptics.swift</code></td>
+<td><code>AVAudioSession</code> <code>.playback</code> +
+<code>[.mixWithOthers]</code>, active. Looping
+<code>AVAudioPlayer</code> on <code>silence.wav</code> at volume 0.01
+and <strong>actually playing</strong>
+(<code>assert(player.isPlaying)</code>); restart on
+<code>AVAudioSession.interruptionNotification</code> and
+<code>routeChangeNotification</code>. KVO <code>outputVolume</code>:
+increase → <code>onUp</code>, decrease → <code>onDown</code>, debounce
+150 ms; <code>suppressUntil: Date</code> window of 300 ms around every
+programmatic write so self-caused changes are ignored. At
+<code>start()</code>, set system volume to 0.5 once via a hidden
+<code>MPVolumeView</code> inside a 1×1 <code>UIWindow</code> that
+<code>Volume</code> creates itself; attempt the same reset after each
+press while the app is foreground, but treat the reset as
+<strong>expected to fail</strong> on modern iOS: correctness must not
+depend on it (at-limit dead zone is accepted).
+<code>Haptics.tick()</code> =
+<code>UIImpactFeedbackGenerator(.medium)</code>. <code>pressCount</code>
+increments per press.</td>
+<td><code>print(&quot;volume up/down #n&quot;)</code> lines; device test in Wave
+2: lock, 10 ups + 10 downs, counts match; then repeat with volume
+started at max and at min and record what still registers.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Astra <strong>medium</strong></td>
+<td><code>mac/Sources/Server.swift</code>,
+<code>scripts/ws-smoke.ts</code></td>
+<td><code>NWListener(using: params)</code> where params = TCP +
+<code>NWProtocolWebSocket.Options(autoReplyPing: true)</code>; try 8787,
+then 8788-8790;
+<code>listener.service = NWListener.Service(name: Host.current().localizedName ?? &quot;Mac&quot;, type: &quot;_stagewand._tcp&quot;)</code>;
+receive text frames, decode <code>Command</code>; auth-within-2-s,
+displace-on-valid-code, ping 3 s / drop 6 s;
+<code>Task { @MainActor in session.peer = …; onCommand(cmd) }</code>;
+<code>kick()</code> sends <code>bye kicked</code> and closes. Encode
+<code>Reply</code> for outbound.</td>
+<td><code>swift run StageWandMac --serve</code> in one terminal,
+<code>bun scripts/ws-smoke.ts</code> (Bun&#39;s <code>WebSocket</code>, code
+&quot;0000&quot;) prints PASS: no auth → closed ≈2 s; bad code →
+<code>bye badauth</code>; good → <code>status</code>; second good →
+first gets <code>bye displaced</code>; 200 moves arrive in order (server
+prints the count); <code>dns-sd -B _stagewand._tcp</code> shows the
+record.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Astra <strong>medium</strong></td>
+<td><code>ios/StageWand/Pointer/TrackpadView.swift</code></td>
+<td><code>struct TrackpadView: UIViewRepresentable { let armed: Bool; let sensitivity: Double; let onCommand: (Command) -&gt; Void }</code>
+wrapping a <code>UIView</code> with <code>UIPanGestureRecognizer</code>
+(min/max 1 touch and a second one with 2),
+<code>UITapGestureRecognizer</code> (1 touch, and 2 touches), three
+<code>UISwipeGestureRecognizer</code>s (3 touches, L/R/U). 1-finger pan
+→ accumulate <code>dPts * 2.0 * sensitivity</code>, flush
+<code>.move</code> on a 60 Hz <code>CADisplayLink</code>/timer; 1-tap →
+<code>.click(.left)</code>; 2-tap → <code>.click(.right)</code>;
+2-finger pan → accumulate and flush <code>.scroll</code> (natural
+direction); 3-swipe → <code>.chord</code>. Emits nothing when
+<code>armed == false</code>.</td>
+<td><code>#Preview</code> with a sink appending JSON lines to an
+on-screen log; in Simulator (Option for two fingers), each gesture
+prints the right command and moves flush at ≈60 Hz.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Astra <strong>low</strong></td>
+<td><code>mac/Sources/Input.swift</code></td>
+<td><code>apply(.move)</code>:
+<code>CGEvent(source:nil)!.location</code> (CG space, top-left origin,
+never <code>NSEvent.mouseLocation</code>), add delta, clamp to the union
+of <code>CGDisplayBounds(id)</code> for every id from
+<code>CGGetActiveDisplayList</code> (already CG space, no conversion),
+post <code>.mouseMoved</code> at the absolute point with
+<code>mouseEventDeltaX/Y</code> set, tap <code>.cghidEventTap</code>.
+<code>.click</code>: down+up pair. <code>.scroll</code>:
+<code>CGEvent(scrollWheelEvent2Source:units:.pixel, wheelCount:2, wheel1: Int32(dy), wheel2: Int32(dx), wheel3: 0)</code>.
+<code>.key</code>: keyDown+keyUp. <code>.chord</code>: same with
+<code>flags = .maskControl</code>.
+<code>accessibilityGranted(prompt:)</code> →
+<code>AXIsProcessTrustedWithOptions</code>. <code>selfTest()</code>: 100
+px right and back, left click, Esc, scroll 3 lines, print before/after
+coordinates, <code>exit(1)</code> if AX missing.</td>
+<td><code>swift run StageWandMac --selftest</code> passes (Entry.swift
+already routes the flag).</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Fable</td>
+<td><code>mac/Sources/App.swift</code>,
+<code>mac/Sources/Session.swift</code></td>
+<td><code>struct StageWandApp: App</code> (no <code>@main</code>); on
+launch <code>NSApp.setActivationPolicy(.accessory)</code>, start
+<code>Server</code>,
+<code>Input.accessibilityGranted(prompt: true)</code>.
+<code>MenuBarExtra(&quot;Stage Wand&quot;, systemImage: &quot;wand.and.rays&quot;)</code>
+popover: pairing code large, <code>LAN IP:port</code> (via
+<code>getifaddrs</code>, en0 first), Accessibility red/green re-checked
+every 2 s, connected phone name or &quot;waiting&quot;, Kick (rotates code,
+<code>server.kick()</code>), Quit. <code>rotateCode()</code> = 4 random
+digits.</td>
+<td><code>swift run StageWandMac</code> shows the icon within 2 s;
+<code>NSApp.activationPolicy() == .accessory</code> printed at launch;
+Kick changes the code; with the popover closed and Keynote in show mode,
+a Mac keyboard arrow still advances Keynote.</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Fable</td>
+<td><code>ios/StageWand/Link.swift</code>,
+<code>ios/StageWand/Discovery.swift</code></td>
+<td><code>Discovery</code>:
+<code>NWBrowser(for: .bonjour(type: &quot;_stagewand._tcp&quot;, domain: nil))</code>;
+publish results as <code>(name, endpoint)</code>; pick the first, expose
+<code>macName</code>; <code>manualHost</code> overrides. Map browser
+<code>.failed</code>/permission denial to
+<code>localNetworkDenied</code>. <code>Link</code>: connect with
+<code>URLSession.shared.webSocketTask(with: endpoint URL ws://host:port/)</code>
+(connecting through the resolved IP is fine; IP literals are
+ATS-exempt); if <code>pairingCode</code> is empty → state
+<code>enterCode</code> and do not connect; send <code>auth</code> first;
+JSON-encode <code>Command</code>; buffer ≤ 8 key/click/chord while not
+authed and flush on <code>authed</code>; receive loop decodes
+<code>Reply</code>; reconnect every 1 s while
+<code>disconnected</code>.</td>
+<td>Simulator + <code>swift run StageWandMac</code>:
+<code>searching → connecting → authed</code>; empty code →
+<code>enterCode</code>; kill the Mac app → <code>disconnected</code>;
+relaunch → <code>authed</code> within 3 s; a <code>key</code> sent while
+disconnected arrives after reconnect.</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Fable</td>
+<td><code>ios/StageWand/StageWandApp.swift</code>,
+<code>ContentView.swift</code>, <code>SettingsView.swift</code></td>
+<td><code>ContentView</code>: connection pill from
+<code>Link.state</code> + <code>macName</code> (with an &quot;Enter code&quot; and
+a &quot;Local network denied, fix in Settings&quot; state); ARM toggle (not
+persisted; off on <code>scenePhase == .background</code>);
+<code>TrackpadView(armed:sensitivity:onCommand:)</code> fills the
+middle; key row ← → ESC; L / R click; big NEXT / PREV (→
+<code>.key(.right)</code> / <code>.key(.left)</code>); small debug label
+showing <code>volume.pressCount</code>. Wires
+<code>Volume(onUp: { link.send(.key(.right)) }, onDown: { link.send(.key(.left)) })</code>
+<strong>outside</strong> the ARM gate and <code>Haptics.tick()</code> on
+every send. <code>SettingsView</code>: sensitivity slider, pairing code
+field, manual host field, pointer mode picker (one option today), using
+exactly the frozen <code>@AppStorage</code> keys.</td>
+<td>Builds; Simulator: every button sends the right command (Mac server
+prints it); ARM off blocks the trackpad but not buttons; entering the
+code moves the pill to <code>authed</code>.</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Fable</td>
+<td><code>README.md</code>, <code>HUMANS.md</code>,
+<code>scripts/rehearse.md</code></td>
+<td>README: what it is; run
+(<code>make app &amp;&amp; open mac/StageWandMac.app</code>, Xcode Run
+for the phone); manual steps (Accessibility + re-grant after rebuild,
+firewall Allow, Trust developer, Local Network permission, type the
+pairing code, same Wi-Fi or hotspot, Mission Control shortcuts on, phone
+volume not at a limit); troubleshooting (no Bonjour → manual host;
+volume presses not registering → check volume not at max/min and the app
+is running; phone locked → it reconnects). HUMANS.md checklist.
+<code>rehearse.md</code>: cold start both → type code → pocket presses
+locked → unlock + ARM → trackpad, scroll, 3-swipe → lock/unlock → Kick →
+hotspot fallback.</td>
+<td>Coordinator can run everything from README alone.</td>
+</tr>
+</tbody>
+</table>
+<p>Astra dispatch (background, one call per row):</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">codex</span> exec <span class="st">&quot;</span><span class="va">$(</span><span class="fu">cat</span> prompts/row-1.md<span class="va">)</span><span class="st">&quot;</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--full-auto</span> <span class="at">-m</span> gpt-6-astra <span class="at">-c</span> <span class="st">&#39;model_reasoning_effort=&quot;high&quot;&#39;</span> <span class="op">&gt;</span> .out/row-1.log <span class="dv">2</span><span class="op">&gt;&amp;</span><span class="dv">1</span> <span class="kw">&amp;</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="co"># rows 2,3: medium · row 4: low</span></span></code></pre></div>
+<p>Fable dispatch:
+<code>Agent(subagent_type: &quot;general-purpose&quot;, model: &quot;fable&quot;, run_in_background: true, prompt: &lt;contract + row + closing line&gt;)</code>.</p>
+<h2 id="wave-2--3552-min--coordinator-integrates-simulator-first-device-second">Wave
+2 · 35–52 min · Coordinator integrates, Simulator first, device
+second</h2>
+<ol type="1">
+<li>Mac: merge rows 2, 4, 5.
+<code>cd mac &amp;&amp; make app &amp;&amp; open StageWandMac.app</code>;
+click Allow (firewall); grant Accessibility.
+<code>bun scripts/ws-smoke.ts</code> against <code>--serve</code> green.
+<strong>Commit.</strong></li>
+<li>Phone in Simulator: merge rows 3, 6, 7. Type the code; Simulator
+finds the Mac; ARM; trackpad moves the real cursor; tap clicks; 2-finger
+scroll in Safari; 3-finger swipe switches spaces; ← → Esc land in
+Keynote. <strong>First complete demo. Commit.</strong></li>
+<li>Device: merge row 1.
+<code>cd ios &amp;&amp; xcodegen &amp;&amp; xcodebuild -scheme StageWand -destination &quot;id=$UDID&quot; -allowProvisioningUpdates -derivedDataPath build build | tail -3 &amp;&amp; xcrun devicectl device install app --device &quot;$UDID&quot; build/Build/Products/Debug-iphoneos/StageWand.app &amp;&amp; xcrun devicectl device process launch --device &quot;$UDID&quot; systems.edmundlim.stagewand</code>.
+<strong>Pass/fail of the pivot:</strong> lock the phone, press volume
+up/down: Keynote advances with a haptic while locked. Then unlock: the
+same socket is still <code>authed</code> (background audio kept it
+alive) or it reconnects and displaces within 3 s.
+<strong>Commit.</strong></li>
+<li>Anything red → paste the failing output to the owning row&#39;s agent
+(Astra: fresh <code>codex exec</code> on the same files, &quot;patch, don&#39;t
+rewrite&quot;; Fable: <code>SendMessage</code>). Coordinator hand-fixes only
+one-line typos.</li>
+</ol>
+<h2 id="wave-3--5260-min--coordinator">Wave 3 · 52–60 min ·
+Coordinator</h2>
+<p>Stop rebuilding the Mac app (each rebuild re-prompts AX and
+firewall). Run <code>scripts/rehearse.md</code>.
+<code>gh repo create EdmundLimBoEn/stage-wand --public --source . --push</code>.
+Tick HUMANS.md. Report DONE with the rehearsal results, or
+DONE_WITH_CONCERNS naming what was cut.</p>
+<p><strong>Stretch (only if Wave 2 finished by minute 45):</strong> row
+9 Astra medium <code>Pointer/JoystickView.swift</code> (offset →
+velocity ≤ 1200 px/s, cubic curve, 60 Hz) then row 10 Astra medium
+<code>Motion.swift</code> + <code>Pointer/GyroView.swift</code>
+(<code>CMMotionManager</code> 60 Hz, <code>rotationRate.y → dx</code>,
+<code>rotationRate.x → dy</code>, dead zone 0.035 rad/s, EMA 0.6, clamp
+60 px, only while HOLD TO AIM is held). Each adds its
+<code>PointerMode</code> case and a Settings picker entry.</p>
+<h2 id="human-steps-edmund-also-in-humansmd">Human steps (Edmund; also
+in HUMANS.md)</h2>
+<ul class="task-list">
+<li><label><input type="checkbox"></input>During Wave 1: open
+<code>ios/StageWand.xcodeproj</code> in Xcode, plug in the iPhone 13 Pro
+Max, Run the stub app once on the device; tap Trust for the developer
+profile; tap Allow on the Local Network prompt.</label></li>
+<li><label><input type="checkbox"></input>Grant Accessibility to
+<code>StageWandMac.app</code> when prompted; expect re-prompts after
+rebuilds.</label></li>
+<li><label><input type="checkbox"></input>Click Allow on the macOS firewall
+prompt at first bind.</label></li>
+<li><label><input type="checkbox"></input>Type the 4-digit pairing code from
+the Mac menu bar into the phone&#39;s Settings once.</label></li>
+<li><label><input type="checkbox"></input>Same Wi-Fi for both devices, or
+iPhone hotspot joined from the Mac.</label></li>
+<li><label><input type="checkbox"></input>Mission Control shortcuts
+(Ctrl+←/→/↑) enabled in System Settings → Keyboard →
+Shortcuts.</label></li>
+<li><label><input type="checkbox"></input>Keynote deck open for every test;
+phone volume not at max or min before the pocket test.</label></li>
+</ul>
+<h2 id="done-means">Done means</h2>
+<p>Locked phone: volume up/down drives Keynote first press with a
+haptic. Unlocked + ARM: cursor, left/right click, scroll, 3-finger space
+switch, ← → Esc. Lock/unlock keeps or recovers control within 3 s. Kick
+rotates the code. Rehearsed once end to end. Pushed to GitHub.</p>
+</body>
+</html>

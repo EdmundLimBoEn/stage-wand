@@ -1,0 +1,32 @@
+name: StageWand
+options:
+  bundleIdPrefix: systems.edmundlim
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    DEVELOPMENT_TEAM: U968QPQQ67
+    CODE_SIGN_STYLE: Automatic
+targets:
+  StageWand:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - StageWand
+      - ../Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: systems.edmundlim.stagewand
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: YES
+    info:
+      path: build/Info.plist
+      properties:
+        CFBundleDisplayName: Stage Wand
+        UILaunchScreen: {}
+        UIBackgroundModes: [audio]
+        NSLocalNetworkUsageDescription: Connect to your Mac to control presentations and the pointer.
+        NSBonjourServices: [_stagewand._tcp]
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
