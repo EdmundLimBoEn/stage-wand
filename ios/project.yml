@@ -24,6 +24,9 @@ targets:
       path: build/Info.plist
       properties:
         CFBundleDisplayName: Stage Wand
+        CFBundleURLTypes:
+          - CFBundleURLName: systems.edmundlim.stagewand
+            CFBundleURLSchemes: [stagewand]
         UILaunchScreen: {}
         UIBackgroundModes: [audio]
         NSLocalNetworkUsageDescription: Connect to your Mac to control presentations and the pointer.

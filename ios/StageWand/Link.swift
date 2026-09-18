@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Network
 
 @MainActor
 final class Link: ObservableObject {
@@ -9,7 +10,38 @@ final class Link: ObservableObject {
     @Published var state: State = .searching
     @Published var macName: String?
     private let discovery = Discovery()
-    private var socket: URLSessionWebSocketTask?
+    @MainActor
+    private enum Transport {
+        case remote(URLSessionWebSocketTask)
+        case nearby(LocalSocket)
+
+        func send(_ data: Data) async throws {
+            switch self {
+            case .remote(let socket): try await socket.send(.string(String(decoding: data, as: UTF8.self)))
+            case .nearby(let socket): try await socket.send(data)
+            }
+        }
+
+        func receive() async throws -> Data {
+            switch self {
+            case .remote(let socket):
+                switch try await socket.receive() {
+                case .data(let data): return data
+                case .string(let string): return Data(string.utf8)
+                @unknown default: throw CancellationError()
+                }
+            case .nearby(let socket): return try await socket.receive()
+            }
+        }
+
+        func cancel() {
+            switch self {
+            case .remote(let socket): socket.cancel(with: .goingAway, reason: nil)
+            case .nearby(let socket): socket.cancel()
+            }
+        }
+    }
+    private var socket: Transport?
     private var receiveTask: Task<Void, Never>?
     private var sendTask: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
@@ -20,7 +52,7 @@ final class Link: ObservableObject {
     private var code = ""
     private var host = ""
     private var buffered: [Command] = []
-    private var outgoing: [Command] = []
+    private var outgoing = CommandQueue()
     private var move = (x: 0.0, y: 0.0)
     private var scroll = (x: 0.0, y: 0.0)
 
@@ -93,8 +125,8 @@ final class Link: ObservableObject {
         retryTask?.cancel()
         retryTask = nil
         if !host.isEmpty {
-            macName = host
-            guard let url = Self.manualURL(host) else { disconnected(); return }
+            guard let url = ConnectionURL.parse(host) else { macName = nil; disconnected(); return }
+            macName = url.host
             open(url)
             return
         }
@@ -104,44 +136,30 @@ final class Link: ObservableObject {
         state = .connecting(result.name)
         let id = generation
         armTimeout(id)
-        discovery.resolve(result.endpoint) { [weak self] url in
+        discovery.resolve(result.endpoint) { [weak self] url, interface in
             guard let self, self.generation == id else { return }
-            if let url { self.open(url) } else { self.disconnected() }
+            guard let url else { self.disconnected(); return }
+            self.begin(.nearby(LocalSocket(url: url, interface: interface)))
         }
-    }
-
-    private static func manualURL(_ host: String) -> URL? {
-        let value = host.contains("://") ? host : "ws://\(host)"
-        guard var parts = URLComponents(string: value), parts.scheme == "ws",
-              let hostname = parts.host, !hostname.isEmpty,
-              parts.user == nil, parts.password == nil else { return nil }
-        if parts.port == nil { parts.port = 8787 }
-        guard let port = parts.port, (1...65535).contains(port) else { return nil }
-        parts.path = "/"
-        parts.query = nil
-        parts.fragment = nil
-        return parts.url
     }
 
     private func open(_ url: URL) {
         state = .connecting(macName ?? url.host ?? "Mac")
         let socket = URLSession.shared.webSocketTask(with: url)
+        socket.resume()
+        begin(.remote(socket))
+    }
+
+    private func begin(_ socket: Transport) {
         self.socket = socket
         let id = generation
         armTimeout(id)
-        socket.resume()
         enqueue(.auth(code: code))
         receiveTask = Task { @MainActor [weak self] in
             do {
                 while !Task.isCancelled {
-                    let message = try await socket.receive()
+                    let data = try await socket.receive()
                     guard let self, self.generation == id else { return }
-                    let data: Data
-                    switch message {
-                    case .data(let value): data = value
-                    case .string(let value): data = Data(value.utf8)
-                    @unknown default: continue
-                    }
                     let reply = try JSONDecoder().decode(Reply.self, from: data)
                     switch reply {
                     case .status:
@@ -171,9 +189,9 @@ final class Link: ObservableObject {
         sendTask = Task { @MainActor [weak self] in
             do {
                 while let self, self.generation == id, !self.outgoing.isEmpty {
-                    let command = self.outgoing.removeFirst()
+                    guard let command = self.outgoing.popFirst() else { break }
                     let data = try JSONEncoder().encode(command)
-                    try await socket.send(.string(String(decoding: data, as: UTF8.self)))
+                    try await socket.send(data)
                 }
                 guard let self, self.generation == id else { return }
                 self.sendTask = nil
@@ -186,13 +204,9 @@ final class Link: ObservableObject {
 
     private func flushDeltas() {
         guard state == .authed else { return }
-        // Split large sums into legal frames without clamping away pointer distance.
-        while move.x != 0 || move.y != 0 {
-            let dx = min(400, max(-400, move.x))
-            let dy = min(400, max(-400, move.y))
-            move.x -= dx
-            move.y -= dy
-            enqueue(.move(dx: dx, dy: dy))
+        if move.x != 0 || move.y != 0 {
+            enqueue(.move(dx: move.x, dy: move.y))
+            move = (0, 0)
         }
         if scroll.x != 0 || scroll.y != 0 {
             enqueue(.scroll(dx: scroll.x, dy: scroll.y))
@@ -203,7 +217,7 @@ final class Link: ObservableObject {
     private func armTimeout(_ id: UUID) {
         timeoutTask?.cancel()
         timeoutTask = Task { @MainActor [weak self] in
-            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            do { try await Task.sleep(for: .seconds(10)) } catch { return }
             guard let self, self.generation == id, self.state != .authed else { return }
             self.disconnected()
         }
@@ -225,7 +239,7 @@ final class Link: ObservableObject {
         retryTask?.cancel()
         receiveTask?.cancel()
         sendTask?.cancel()
-        socket?.cancel(with: .goingAway, reason: nil)
+        socket?.cancel()
         socket = nil
         sendTask = nil
         outgoing.removeAll()

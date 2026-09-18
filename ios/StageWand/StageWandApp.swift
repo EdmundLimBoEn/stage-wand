@@ -7,6 +7,10 @@ struct StageWandApp: App {
         WindowGroup {
             ContentView()
                 .preferredColorScheme(.dark)
+                .onOpenURL { url in
+                    guard let destination = ConnectionURL.pairingDestination(from: url) else { return }
+                    UserDefaults.standard.set(destination.absoluteString, forKey: "manualHost")
+                }
         }
     }
 }

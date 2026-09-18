@@ -192,6 +192,9 @@ struct ContentView: View {
         case .key, .auth: break
         }
         link.send(command)
-        Haptics.tick()
+        switch command {
+        case .key, .click, .chord: Haptics.tick()
+        case .move, .scroll, .auth: break
+        }
     }
 }

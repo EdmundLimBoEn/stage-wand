@@ -48,3 +48,21 @@ Transfer completed human checks to [HUMANS.md](../HUMANS.md).
 ## Touch-lock update
 
 Mac pairing window now opens on launch/reopen. Square-unlock recognizer tests pass for valid traces and rejection of taps, partial, diagonal, fast, wrong-start, stale/reset, and scribbled traces. Signed device build passed. Physical touch-lock and pairing-window visibility still need the user’s confirmation.
+
+## Cloudflare and signing update
+
+- Authenticated `cf` CLI created named tunnel `stage-wand` at `stagewand.edmundlim.systems`; tunnel status healthy.
+- Native URLSession secure WebSocket reached the real Mac authentication gate over Cloudflare; wrong code received `bye badauth`.
+- Protected HTTP path returned 200; unknown path returned 404. Gate tests passed transparent auth/reply, ping/pong ordering, 32-connection cap, and cleanup.
+- Secure URL parser and QR deep-link checks passed; signed device app installed/launched with the tunnel URL scheme.
+- Mac app now signs with Apple Development certificate and installs at `~/Applications/StageWandMac.app`. Verified designated requirement uses bundle identifier and certificate, rather than an ad-hoc binary hash. Replace the old Accessibility entry once.
+- End-to-end physical phone pairing, Keynote, and locked haptics remain user checks.
+
+## Nearby latency update
+
+- Direct transport opts into Apple peer-to-peer networking, resolves Bonjour through a scoped TCP path, then uses a native WebSocket URL on the resolved interface. Manual tunnel URLs retain TLS URLSession transport.
+- Production native socket fixture passed resolution, authentication, send, >7-second ping/pong, cancellation, and bad-code rejection. Full Swift 6 iOS typecheck passed.
+- Queue tests coalesced 1,000 moves with exact summed distance, legal <=400 frame splitting, and preserved key/click ordering. Pointer/scroll updates no longer trigger haptics.
+- Mac listener now uses dual-stack binding, peer-to-peer opt-in, and TCP no-delay; full server smoke suite passed. Tunnel gate also disables Nagle buffering.
+- Development certificate designated requirement was identical before and after a release rebuild.
+- Physical nearby discovery and latency improvement remain unverified. CLI Bonjour browsing found no results, potentially due to local-network permission; the actual signed phone and Mac must be tested.

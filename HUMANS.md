@@ -7,7 +7,7 @@ Physical setup and acceptance checks for Stage Wand. Start with [README.md](READ
 - [ ] Allow Local Network or developer-trust prompts if shown.
 - [ ] Allow Local Network access on the phone.
 - [x] Build, sign, verify, and launch `StageWandMac.app`.
-- [ ] Grant Accessibility to the packaged Mac app. Re-grant after rebuilding if macOS invalidates the permission.
+- [ ] Replace the old ad-hoc Accessibility entry with the development-signed `~/Applications/StageWandMac.app` and enable it.
 - [ ] Click Allow on the macOS firewall incoming-connections prompt.
 - [ ] Put both devices on the same Wi-Fi, or enable the iPhone hotspot and join it from the Mac.
 - [ ] Type the current four-digit Mac pairing code into phone Settings and verify authentication.
@@ -25,3 +25,8 @@ Physical setup and acceptance checks for Stage Wand. Start with [README.md](READ
 - [ ] Confirm the Mac pairing window is visible on launch/reopen.
 - [ ] Confirm taps, incomplete squares, diagonal swipes, and rapid scribbles do not unlock volume mode; a deliberate full square does.
 - [ ] Confirm Lock for pocket and leaving the app relock all touch controls while hardware volume remains available.
+
+- [ ] Scan the tunnel QR with iPhone Camera, open Stage Wand, unlock with the square, and enter the current Mac pairing code.
+- [ ] Verify keys and locked volume presses over the tunnel; keep the tunnel runner and Mac app running.
+
+- [ ] With Wi-Fi and Bluetooth enabled, choose Use nearby Mac (low latency), pair with the displayed code, and compare cursor response. If discovery fails, join the iPhone Personal Hotspot and retry direct mode.

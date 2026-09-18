@@ -28,14 +28,16 @@ import Network
         if let port = listener?.port { return port.rawValue }
         var lastError: Error = NWError.posix(.EADDRINUSE)
         for port in UInt16(8787)...UInt16(8790) {
-            let params = NWParameters.tcp
+            let tcp = NWProtocolTCP.Options()
+            tcp.noDelay = true
+            let params = NWParameters(tls: nil, tcp: tcp)
+            params.includePeerToPeer = true
             let websocket = NWProtocolWebSocket.Options()
             websocket.autoReplyPing = true
             websocket.maximumMessageSize = 16_384
             params.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
-            params.requiredLocalEndpoint = .hostPort(host: .ipv4(.any), port: NWEndpoint.Port(rawValue: port)!)
             do {
-                let candidate = try NWListener(using: params)
+                let candidate = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
                 candidate.service = NWListener.Service(name: Host.current().localizedName ?? "Mac", type: "_stagewand._tcp")
                 let ready = DispatchSemaphore(value: 0)
                 candidate.stateUpdateHandler = { state in

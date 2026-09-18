@@ -3,19 +3,19 @@ import Network
 import Combine
 
 @MainActor
-final class Discovery: NSObject, ObservableObject, @preconcurrency NetServiceDelegate {
+final class Discovery: ObservableObject {
     @Published private(set) var results: [(name: String, endpoint: NWEndpoint)] = []
     var onResults: (() -> Void)?
     var onDenied: (() -> Void)?
     private var browser: NWBrowser?
     private var resolver: NWConnection?
     private var resolutionID = UUID()
-    private var service: NetService?
-    private var completion: (@MainActor (URL?) -> Void)?
 
     func start() {
         guard browser == nil else { return }
-        let browser = NWBrowser(for: .bonjour(type: "_stagewand._tcp", domain: nil), using: .tcp)
+        let parameters = NWParameters.tcp
+        parameters.includePeerToPeer = true
+        let browser = NWBrowser(for: .bonjour(type: "_stagewand._tcp", domain: nil), using: parameters)
         self.browser = browser
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             Task { @MainActor in
@@ -48,26 +48,21 @@ final class Discovery: NSObject, ObservableObject, @preconcurrency NetServiceDel
         browser.start(queue: .main)
     }
 
-    func resolve(_ endpoint: NWEndpoint, completion: @escaping @MainActor (URL?) -> Void) {
+
+    // Native WebSocket needs a URL endpoint; resolve over peer-to-peer TCP first and retain its interface.
+    func resolve(_ endpoint: NWEndpoint, completion: @escaping @MainActor (URL?, NWInterface?) -> Void) {
         cancelResolution()
-        if case .service(let name, let type, let domain, _) = endpoint {
-            let service = NetService(domain: domain, type: type, name: name)
-            self.service = service
-            self.completion = completion
-            service.delegate = self
-            service.schedule(in: .main, forMode: .common)
-            service.resolve(withTimeout: 2)
-            return
-        }
         let id = resolutionID
-        let connection = NWConnection(to: endpoint, using: .tcp)
+        let parameters = NWParameters.tcp
+        parameters.includePeerToPeer = true
+        let connection = NWConnection(to: endpoint, using: parameters)
         resolver = connection
         connection.stateUpdateHandler = { [weak self] state in
             Task { @MainActor in
                 guard let self, self.resolutionID == id else { return }
                 switch state {
                 case .ready:
-                    let url: URL?
+                    var url: URL?
                     if case .hostPort(let host, let port) = connection.currentPath?.remoteEndpoint {
                         var parts = URLComponents()
                         parts.scheme = "ws"
@@ -76,14 +71,13 @@ final class Discovery: NSObject, ObservableObject, @preconcurrency NetServiceDel
                         parts.port = Int(port.rawValue)
                         parts.path = "/"
                         url = parts.url
-                    } else {
-                        url = nil
                     }
+                    let interface = connection.currentPath?.availableInterfaces.first
                     self.cancelResolution()
-                    completion(url)
+                    completion(url, interface)
                 case .failed:
                     self.cancelResolution()
-                    completion(nil)
+                    completion(nil, nil)
                 default: break
                 }
             }
@@ -91,31 +85,7 @@ final class Discovery: NSObject, ObservableObject, @preconcurrency NetServiceDel
         connection.start(queue: .main)
     }
 
-    func netServiceDidResolveAddress(_ sender: NetService) {
-        guard sender === service else { return }
-        var parts = URLComponents()
-        parts.scheme = "ws"
-        parts.host = sender.hostName
-        parts.port = sender.port
-        parts.path = "/"
-        let callback = completion
-        let url = parts.url
-        cancelResolution()
-        callback?(url)
-    }
-
-    func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
-        guard sender === service else { return }
-        let callback = completion
-        cancelResolution()
-        callback?(nil)
-    }
-
     func cancelResolution() {
-        service?.stop()
-        service?.delegate = nil
-        service = nil
-        completion = nil
         resolutionID = UUID()
         resolver?.cancel()
         resolver = nil

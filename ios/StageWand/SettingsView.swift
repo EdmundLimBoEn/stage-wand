@@ -31,16 +31,26 @@ struct SettingsView: View {
                         .accessibilityLabel("Pointer sensitivity")
                 }
                 Section("Pairing") {
+                    SwiftUI.Button("Use nearby Mac (low latency)") { manualHost = "" }
+                    Text("Keep Wi-Fi and Bluetooth on on both devices. Nearby mode can connect directly without a shared router when peer-to-peer Wi-Fi is available.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     TextField("Pairing code", text: $pairingCode)
                         .keyboardType(.numberPad)
                         .textContentType(.oneTimeCode)
-                    TextField("Manual host or host:port", text: $manualHost)
+                    TextField("Mac address or tunnel URL", text: $manualHost)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                    if !manualHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       ConnectionURL.parse(manualHost) == nil {
+                        Text("Enter a valid Mac address or ws, wss, http or https URL without a username, password or fragment.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
                 Section {
-                    Text("Find the pairing code and port in the Stage Wand menu on your Mac. Leave manual host empty to discover your Mac automatically.")
+                    Text("Find the pairing code in the Stage Wand menu on your Mac. Paste a tunnel URL when the network blocks local connections, or enter a local host:port. Leave the address empty for automatic discovery.")
                 }
             }
             .navigationTitle("Settings")

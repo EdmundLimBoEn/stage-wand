@@ -9,10 +9,10 @@ Requires macOS 14+, an iPhone running iOS 17+, Xcode with iOS device support, an
 Run these commands from the repository root:
 
 ```sh
-make -C mac app && open mac/StageWandMac.app
+make -C mac app && open ~/Applications/StageWandMac.app
 ```
 
-This runs `make app` in `mac/`, builds the release executable, and wraps it in a menu bar app. A pairing window opens on launch with the code, connection status, and listening port. Reopen the app or use its menu bar item to show the window again. The default port is **8787**, with fallback ports **8788–8790**; always use the port shown there.
+This runs `make app` in `mac/`, builds the release executable, and signs it with your Apple Development identity, and installs it at `~/Applications/StageWandMac.app`. A pairing window opens on launch with the code, connection status, and listening port. Reopen the app or use its menu bar item to show the window again. The default port is **8787**, with fallback ports **8788–8790**; always use the port shown there.
 
 Generate and open the phone project:
 
@@ -25,8 +25,8 @@ In Xcode, select the **StageWand** scheme and your connected iPhone, check autom
 
 ## First connection
 
-1. Put both devices on the same Wi-Fi. Alternatively, enable Personal Hotspot on the iPhone and join it from the Mac.
-2. On the Mac, allow StageWandMac in **System Settings → Privacy & Security → Accessibility**. After rebuilding, re-grant access if input stops working: remove the old entry, add `mac/StageWandMac.app`, enable it, and relaunch.
+1. Keep Wi-Fi and Bluetooth enabled on both devices. In phone Settings, choose **Use nearby Mac (low latency)** to clear the tunnel override and enable local/Apple peer-to-peer discovery. If discovery fails on the venue network, enable Personal Hotspot on the iPhone and join it from the Mac.
+2. On the Mac, allow StageWandMac in **System Settings → Privacy & Security → Accessibility**. If an old ad-hoc build was granted access, remove that old entry, add `~/Applications/StageWandMac.app`, enable it, and relaunch. The development-certificate signature now stays stable across rebuilds.
 3. Choose **Allow** when the macOS firewall asks about incoming connections.
 4. Allow **Local Network** access on the phone. If denied, enable Stage Wand in **Settings → Privacy & Security → Local Network** and reopen the app.
 5. Draw the square on the phone to unlock touch controls, then open Settings and type the four-digit pairing code shown in the Mac pairing window, including any leading zeros. Wait for the authenticated/connected state before testing controls.
@@ -55,7 +55,7 @@ The phone plays a silent audio loop to support pocket operation. Volume recenter
 | --- | --- |
 | No Mac appears through Bonjour | Check Local Network permission and the shared network. In phone Settings, enter the Mac's Wi-Fi IP address in Manual Host, such as `192.168.1.20:8787`, substituting the actual IP and popover port. A host without a port uses 8787. Find the IP in the Mac's Wi-Fi network details. Discovery uses `_stagewand._tcp`. |
 | Manual connection also fails | Check the popover port and firewall permission. Guest Wi-Fi may isolate clients; use the iPhone hotspot fallback. Update or clear Manual Host after changing networks. |
-| Connected but the Mac ignores input | Re-grant Accessibility after a rebuild, draw the square to unlock touch controls, and put the intended Mac app frontmost. |
+| Connected but the Mac ignores input | Ensure the signed app in `~/Applications` is the enabled Accessibility entry, draw the square to unlock touch controls, and put the intended Mac app frontmost. |
 | Volume presses do not register | Check that media volume is not at maximum/minimum and Stage Wand is running. Reopen it after an audio interruption. Test on the physical phone; use NEXT/PREV if necessary. |
 | Phone was locked or connection dropped | Unlock and reopen Stage Wand; it reconnects. Wait for authentication, then draw the square again. Up to eight queued key/click/chord commands may arrive after reconnecting. |
 | Pairing code rejected or Mac used Kick | Read the current code from the Mac popover and replace the saved phone code. Kick rotates the code and disconnects the peer. |
@@ -81,4 +81,25 @@ bun scripts/ws-smoke.ts --spawn
 
 `--spawn` starts a headless server with test code `0000`, verifies delivery order and authentication, then stops it. Normal app launches generate a random pairing code.
 
-To exercise the phone transport against a running headless server, compile `Shared/Protocol.swift`, `ios/StageWand/Discovery.swift`, `ios/StageWand/Link.swift`, and `scripts/link-check.swift` together with `swiftc -swift-version 6`; run the result with `PORT` set to the test server port (default 8787).
+To exercise the phone transport against a running headless server, compile `Shared/Protocol.swift`, `Shared/ConnectionURL.swift`, `Shared/CommandQueue.swift`, `ios/StageWand/Discovery.swift`, `ios/StageWand/LocalSocket.swift`, `ios/StageWand/Link.swift`, and `scripts/link-check.swift` together with `swiftc -swift-version 6`; run the result with `PORT` set to the test server port (default 8787).
+
+## Cloudflare Tunnel for isolated Wi-Fi
+
+When the network blocks phone-to-Mac traffic, run the Mac app and then:
+
+```sh
+brew install cloudflared
+bun scripts/tunnel.ts
+```
+
+Keep the tunnel process running. The Mac pairing window updates with a QR code. Scan it using the iPhone Camera and open Stage Wand; draw the square to unlock Settings and enter the Mac’s current four-digit code. The phone and Mac only need Internet access, not direct LAN connectivity. You can also use **Copy tunnel URL** on the Mac and paste it into the phone’s **Mac address or tunnel URL** field.
+
+This Mac uses the named tunnel **stage-wand** at **stagewand.edmundlim.systems**, created using the authenticated `cf` CLI. Its token and hostname live in `~/.config/stage-wand/tunnel-token` and `named-host`; the secret URL path persists in `tunnel-path`, so restarts keep the same phone address. Without a named-tunnel token, the runner falls back to a temporary Quick Tunnel. See [Cloudflare’s setup documentation](https://developers.cloudflare.com/tunnel/get-started/).
+
+The tunnel URL contains a random 256-bit secret path, checked before traffic reaches the Mac WebSocket server. The four-digit pairing code remains required. Treat the QR and full URL as private; neither is committed. The local URL file is `~/.config/stage-wand/tunnel-url`. Stop the runner with Ctrl+C to remove the URL and close the tunnel. If the Mac chooses a fallback port, start the runner with `STAGEWAND_PORT=8788 bun scripts/tunnel.ts` (substitute the port shown).
+
+## Cursor latency
+
+Use **Settings → Use nearby Mac (low latency)** for trackpad control. This opts into Apple peer-to-peer Wi-Fi through Network.framework and avoids the Cloudflare round trip when a direct path is available. Wi-Fi and Bluetooth should be enabled on both devices. See [Apple’s peer-to-peer networking guidance](https://developer.apple.com/documentation/technotes/tn3213-moving-from-multipeer-connectivity-to-network-framework).
+
+The app coalesces pending movement without losing distance, uses TCP no-delay for direct connections, and gives haptics only for discrete buttons/clicks rather than every pointer update. Cloudflare remains available when direct connectivity is unavailable; its latency depends on the Internet route. Nearby wireless behavior must be checked on the actual phone and Mac.

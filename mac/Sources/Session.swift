@@ -9,12 +9,14 @@ final class Session: ObservableObject {
     @Published var axGranted = false
     @Published var lanIP: String?
     @Published var startupError: String?
+    @Published var tunnelURL: String?
     var server: Server?
     private var refreshTimer: Timer?
 
     init() {
         rotateCode()
         lanIP = Self.localAddress()
+        refreshTunnelURL()
     }
 
     func rotateCode() {
@@ -38,8 +40,23 @@ final class Session: ObservableObject {
                 guard let self else { return }
                 self.axGranted = Input.accessibilityGranted(prompt: false)
                 self.lanIP = Self.localAddress()
+                self.refreshTunnelURL()
             }
         }
+    }
+
+    private func refreshTunnelURL() {
+        let file = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/stage-wand/tunnel-url")
+        let value = (try? String(contentsOf: file, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let validURL = value.flatMap { value -> String? in
+            guard let url = URL(string: value), url.scheme == "wss",
+                  let host = url.host, !host.isEmpty,
+                  url.user == nil, url.password == nil else { return nil }
+            return value
+        }
+        if tunnelURL != validURL { tunnelURL = validURL }
     }
 
     private static func localAddress() -> String? {
