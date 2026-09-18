@@ -36,7 +36,7 @@ Transfer completed human checks to [HUMANS.md](../HUMANS.md).
 ## Build-day automated evidence (2026-09-18)
 
 - macOS debug and release builds passed; app bundle code signature verified.
-- Full iOS Simulator and signed iPhone 17 Pro builds passed (Swift 6).
+- Full iOS Simulator and signed iPhone 17 Pro builds passed (Swift 6). Device installation and launch succeeded; the app process was verified running.
 - Protocol round trips and nonfinite/unknown-frame rejection passed.
 - Real server: auth deadline ~2.1 s, bad auth, displacement, 200 ordered moves, invalid-delta rejection, ping/pong, missing-pong close ~6.4 s, fallback ports, and Bonjour passed.
 - Phone Link against real server: eight buffered keys arrived; 900/-850 movement split into 400/-400, 400/-400, 100/-50; scroll arrived; bad and empty codes entered code state.
