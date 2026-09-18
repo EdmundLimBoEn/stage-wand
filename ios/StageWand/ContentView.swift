@@ -5,6 +5,8 @@ struct ContentView: View {
     @StateObject private var link = Link()
     @State private var volume: Volume?
     @State private var armed = false
+    @State private var touchLocked = true
+    @State private var lockGeneration = 0
     @State private var showingSettings = false
     @AppStorage("sensitivity") private var sensitivity: Double = 1.0
     @AppStorage("pairingCode") private var pairingCode: String = ""
@@ -14,57 +16,77 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
-                connectionPill
-                if link.state == .enterCode {
-                    HStack {
-                        TextField("Enter Mac code", text: $pairingCode)
-                            .keyboardType(.numberPad)
-                            .textContentType(.oneTimeCode)
-                            .textFieldStyle(.roundedBorder)
-                            .accessibilityLabel("Pairing code")
-                        SwiftUI.Button("Pair") {
-                            link.start()
-                            Haptics.tick()
+                if touchLocked {
+                    ScrollView {
+                        VStack(spacing: 24) {
+                            connectionStatus
+                            SquareUnlockView {
+                                guard scenePhase == .active else { return }
+                                touchLocked = false
+                                Haptics.tick()
+                            }
+                            .id(lockGeneration)
                         }
-                            .disabled(pairingCode.isEmpty)
+                        .frame(maxWidth: .infinity)
                     }
-                }
-                Toggle(isOn: $armed) {
-                    Label(armed ? "ARMED" : "ARM POINTER", systemImage: armed ? "hand.draw.fill" : "hand.draw")
-                        .font(.headline)
-                }
-                .tint(.mint)
+                } else {
+                    connectionPill
+                    SwiftUI.Button(action: lockForPocket) {
+                        Label("Lock for pocket", systemImage: "lock.fill")
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    if link.state == .enterCode {
+                        HStack {
+                            TextField("Enter Mac code", text: $pairingCode)
+                                .keyboardType(.numberPad)
+                                .textContentType(.oneTimeCode)
+                                .textFieldStyle(.roundedBorder)
+                                .accessibilityLabel("Pairing code")
+                            SwiftUI.Button("Pair") {
+                                link.start()
+                                Haptics.tick()
+                            }
+                                .disabled(pairingCode.isEmpty)
+                        }
+                    }
+                    Toggle(isOn: $armed) {
+                        Label(armed ? "ARMED" : "ARM POINTER", systemImage: armed ? "hand.draw.fill" : "hand.draw")
+                            .font(.headline)
+                    }
+                    .tint(.mint)
 
-                TrackpadView(armed: armed, sensitivity: sensitivity) { command in
-                    guard armed else { return }
-                    send(command)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .frame(minHeight: 140)
-                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 24))
-                .overlay(alignment: .top) {
-                    Text(armed ? "Drag to point · Tap to click" : "Arm to use the trackpad")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding()
-                        .allowsHitTesting(false)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 24))
-                .accessibilityLabel("Trackpad")
+                    TrackpadView(armed: armed, sensitivity: sensitivity) { command in
+                        guard armed else { return }
+                        send(command)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minHeight: 140)
+                    .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 24))
+                    .overlay(alignment: .top) {
+                        Text(armed ? "Drag to point · Tap to click" : "Arm to use the trackpad")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding()
+                            .allowsHitTesting(false)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 24))
+                    .accessibilityLabel("Trackpad")
 
-                HStack(spacing: 12) {
-                    commandButton("←", label: "Left arrow", command: .key(.left))
-                    commandButton("→", label: "Right arrow", command: .key(.right))
-                    commandButton("ESC", label: "Escape", command: .key(.esc))
-                }
-                HStack(spacing: 12) {
-                    commandButton("L CLICK", label: "Left click", command: .click(.left))
-                    commandButton("R CLICK", label: "Right click", command: .click(.right))
-                }
-                .disabled(!armed)
-                HStack(spacing: 12) {
-                    commandButton("PREV", label: "Previous slide", command: .key(.left), large: true)
-                    commandButton("NEXT", label: "Next slide", command: .key(.right), large: true)
+                    HStack(spacing: 12) {
+                        commandButton("←", label: "Left arrow", command: .key(.left))
+                        commandButton("→", label: "Right arrow", command: .key(.right))
+                        commandButton("ESC", label: "Escape", command: .key(.esc))
+                    }
+                    HStack(spacing: 12) {
+                        commandButton("L CLICK", label: "Left click", command: .click(.left))
+                        commandButton("R CLICK", label: "Right click", command: .click(.right))
+                    }
+                    .disabled(!armed)
+                    HStack(spacing: 12) {
+                        commandButton("PREV", label: "Previous slide", command: .key(.left), large: true)
+                        commandButton("NEXT", label: "Next slide", command: .key(.right), large: true)
+                    }
                 }
                 TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                     Text("Volume presses: \(volume?.pressCount ?? 0)")
@@ -76,28 +98,48 @@ struct ContentView: View {
             .navigationTitle("Stage Wand")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    SwiftUI.Button { showingSettings = true } label: {
-                        Image(systemName: "gearshape")
+                if !touchLocked {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        SwiftUI.Button { showingSettings = true } label: {
+                            Image(systemName: "gearshape")
+                        }
+                        .accessibilityLabel("Settings")
                     }
-                    .accessibilityLabel("Settings")
                 }
             }
             .sheet(isPresented: $showingSettings) { SettingsView() }
             .task {
                 guard volume == nil else { return }
                 volume = Volume(
-                    onUp: { send(.key(.right)) },
-                    onDown: { send(.key(.left)) }
+                    onUp: { sendVolume(.key(.right)) },
+                    onDown: { sendVolume(.key(.left)) }
                 )
                 volume?.start()
                 link.start()
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .background { armed = false }
+                if phase != .active { lockForPocket() }
                 if phase == .active { volume?.start() }
             }
         }
+    }
+
+    private func lockForPocket() {
+        touchLocked = true
+        armed = false
+        showingSettings = false
+        lockGeneration += 1
+    }
+
+    private var connectionStatus: some View {
+        HStack(spacing: 8) {
+            Circle().fill(link.state == .authed ? Color.mint : Color.orange)
+                .frame(width: 8, height: 8)
+            Text(connectionText).font(.subheadline)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(.white.opacity(0.08), in: Capsule())
     }
 
     private var connectionPill: some View {
@@ -110,14 +152,7 @@ struct ContentView: View {
             default: break
             }
         } label: {
-            HStack(spacing: 8) {
-                Circle().fill(link.state == .authed ? Color.mint : Color.orange)
-                    .frame(width: 8, height: 8)
-                Text(connectionText).font(.subheadline)
-                Spacer(minLength: 0)
-            }
-            .padding(12)
-            .background(.white.opacity(0.08), in: Capsule())
+            connectionStatus
         }
         .buttonStyle(.plain)
     }
@@ -128,7 +163,7 @@ struct ContentView: View {
         case .connecting(let host): "Connecting to \(link.macName ?? host)…"
         case .enterCode: "Enter code · \(link.macName ?? "Mac")"
         case .authed: "Connected · \(link.macName ?? "Mac")"
-        case .disconnected: "Disconnected · Tap to reconnect"
+        case .disconnected: touchLocked ? "Disconnected · Unlock to reconnect" : "Disconnected · Tap to reconnect"
         case .localNetworkDenied: "Local network denied, fix in Settings"
         }
     }
@@ -144,7 +179,13 @@ struct ContentView: View {
         .accessibilityLabel(label)
     }
 
+    private func sendVolume(_ command: Command) {
+        link.send(command)
+        Haptics.tick()
+    }
+
     private func send(_ command: Command) {
+        guard !touchLocked, scenePhase == .active else { return }
         switch command {
         case .move, .click, .scroll, .chord:
             guard armed else { return }
