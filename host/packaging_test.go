@@ -52,6 +52,9 @@ func TestArchUinputPackaging(t *testing.T) {
 	if !strings.Contains(readme, "pacman -S --needed go git") {
 		t.Fatal("README must show the Arch pacman install line")
 	}
+	if !strings.Contains(readme, "pacman -S --needed bluez bluez-utils") {
+		t.Fatal("README must show the Arch bluez install line")
+	}
 	if strings.Contains(readme, "usermod -aG input") {
 		t.Fatal("README must not tell users to join the input group")
 	}

@@ -3,8 +3,11 @@ module github.com/EdmundLimBoEn/stage-wand/host
 go 1.22
 
 require (
+	github.com/go-ole/go-ole v1.2.6
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/grandcat/zeroconf v1.0.0
+	github.com/saltosystems/winrt-go v0.0.0-20240509164145-4f7860a3bd2b
 	golang.org/x/sys v0.25.0
 )
 

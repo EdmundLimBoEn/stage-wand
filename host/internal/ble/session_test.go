@@ -1,0 +1,125 @@
+package ble
+
+import (
+	"sync"
+	"testing"
+
+	"github.com/EdmundLimBoEn/stage-wand/host/internal/protocol"
+)
+
+func TestUUIDsMatchApple(t *testing.T) {
+	if ServiceUUID != "5A3E0001-8B6C-4B1E-9F8D-2C7A1D4E6F01" {
+		t.Fatalf("service %s", ServiceUUID)
+	}
+	if CommandUUID != "5A3E0002-8B6C-4B1E-9F8D-2C7A1D4E6F01" {
+		t.Fatalf("command %s", CommandUUID)
+	}
+	if ReplyUUID != "5A3E0003-8B6C-4B1E-9F8D-2C7A1D4E6F01" {
+		t.Fatalf("reply %s", ReplyUUID)
+	}
+}
+
+func TestAuthStatusAndCommands(t *testing.T) {
+	var mu sync.Mutex
+	var got []protocol.Command
+	session := NewSession(Hooks{
+		Code:    func() string { return "0000" },
+		SetPeer: func(string) {},
+		OnCommand: func(command protocol.Command) {
+			mu.Lock()
+			got = append(got, command)
+			mu.Unlock()
+		},
+	})
+	if actions := session.Handle("phone", []byte(`{"t":"key","k":"right"}`)); len(actions) != 0 {
+		t.Fatalf("pre-auth command: %#v", actions)
+	}
+	actions := session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
+	if len(actions) != 1 || string(actions[0].Notify) != `{"t":"status"}` {
+		t.Fatalf("auth %#v", actions)
+	}
+	if session.Authed() != "phone" {
+		t.Fatalf("authed %q", session.Authed())
+	}
+	session.Handle("phone", []byte(`{"t":"move","dx":1,"dy":-2}`))
+	session.Handle("phone", []byte(`{"t":"move","dx":401,"dy":0}`))
+	session.Handle("phone", []byte(`{"t":"key","k":"right"}`))
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("got %#v", got)
+	}
+	move, ok := got[0].(protocol.Move)
+	if !ok || move.Dx != 1 || move.Dy != -2 {
+		t.Fatalf("move %#v", got[0])
+	}
+	if _, ok := got[1].(protocol.KeyPress); !ok {
+		t.Fatalf("key %#v", got[1])
+	}
+}
+
+func TestBadAuthBroadcastWhenIdle(t *testing.T) {
+	session := NewSession(Hooks{Code: func() string { return "0000" }})
+	actions := session.Handle("intruder", []byte(`{"t":"auth","code":"9999"}`))
+	if len(actions) != 1 || !actions[0].Broadcast || string(actions[0].Notify) != `{"t":"bye","reason":"badauth"}` {
+		t.Fatalf("%#v", actions)
+	}
+}
+
+func TestBadAuthDropsSecondCentral(t *testing.T) {
+	session := NewSession(Hooks{Code: func() string { return "0000" }})
+	session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
+	actions := session.Handle("other", []byte(`{"t":"auth","code":"1111"}`))
+	if len(actions) != 1 || actions[0].Drop != "other" || actions[0].Notify != nil {
+		t.Fatalf("%#v", actions)
+	}
+	if session.Authed() != "phone" {
+		t.Fatalf("authed %q", session.Authed())
+	}
+}
+
+func TestDisplaceDropsPrevious(t *testing.T) {
+	session := NewSession(Hooks{Code: func() string { return "0000" }})
+	session.Handle("first", []byte(`{"t":"auth","code":"0000"}`))
+	actions := session.Handle("second", []byte(`{"t":"auth","code":"0000"}`))
+	if len(actions) != 2 {
+		t.Fatalf("%#v", actions)
+	}
+	if actions[0].Drop != "first" {
+		t.Fatalf("drop %#v", actions[0])
+	}
+	if string(actions[1].Notify) != `{"t":"status"}` {
+		t.Fatalf("status %#v", actions[1])
+	}
+	if session.Authed() != "second" {
+		t.Fatalf("authed %q", session.Authed())
+	}
+}
+
+func TestKickAndDrop(t *testing.T) {
+	peer := "Bluetooth"
+	session := NewSession(Hooks{
+		Code:    func() string { return "0000" },
+		SetPeer: func(value string) { peer = value },
+	})
+	session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
+	if peer != "Bluetooth" {
+		t.Fatalf("peer %q", peer)
+	}
+	actions := session.Kick()
+	if len(actions) != 1 || !actions[0].Broadcast || string(actions[0].Notify) != `{"t":"bye","reason":"kicked"}` {
+		t.Fatalf("kick %#v", actions)
+	}
+	if session.Authed() != "" || peer != "" {
+		t.Fatalf("after kick authed=%q peer=%q", session.Authed(), peer)
+	}
+	session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
+	session.Drop("other")
+	if session.Authed() != "phone" {
+		t.Fatal("drop other")
+	}
+	session.Drop("phone")
+	if session.Authed() != "" {
+		t.Fatal("drop phone")
+	}
+}

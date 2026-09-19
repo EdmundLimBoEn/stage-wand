@@ -38,13 +38,20 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { link.start() }
+    ) {
+        if (settings.transport == "bluetooth" && !hasBluetoothPermission()) {
+            link.markBluetoothDenied()
+        } else {
+            link.start()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = loadSettings()
         val discovery = Discovery(this)
-        link = Link(discovery)
+        val bluetooth = BluetoothClient(this)
+        link = Link(discovery, bluetooth)
         link.onChange = { tick++ }
         link.update(settings)
         KeepAliveService.listener = { up -> sendVolume(if (up) KeyName.Right else KeyName.Left) }
@@ -148,7 +155,8 @@ class MainActivity : ComponentActivity() {
         return Settings(
             pairingCode = prefs.getString("pairingCode", "") ?: "",
             manualHost = prefs.getString("manualHost", "") ?: "",
-            sensitivity = prefs.getFloat("sensitivity", 1f)
+            sensitivity = prefs.getFloat("sensitivity", 1f),
+            transport = prefs.getString("transport", "bluetooth") ?: "bluetooth"
         )
     }
 
@@ -157,6 +165,7 @@ class MainActivity : ComponentActivity() {
             .putString("pairingCode", value.pairingCode)
             .putString("manualHost", value.manualHost)
             .putFloat("sensitivity", value.sensitivity)
+            .putString("transport", value.transport)
             .apply()
     }
 
@@ -167,6 +176,14 @@ class MainActivity : ComponentActivity() {
 
     private fun requestPermissions() {
         val needed = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= 31) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                needed += Manifest.permission.BLUETOOTH_SCAN
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                needed += Manifest.permission.BLUETOOTH_CONNECT
+            }
+        }
         if (Build.VERSION.SDK_INT >= 33) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
                 needed += Manifest.permission.NEARBY_WIFI_DEVICES
@@ -179,6 +196,20 @@ class MainActivity : ComponentActivity() {
                 needed += Manifest.permission.ACCESS_FINE_LOCATION
             }
         }
-        if (needed.isEmpty()) link.start() else permissionLauncher.launch(needed.toTypedArray())
+        if (needed.isEmpty()) {
+            if (settings.transport == "bluetooth" && !hasBluetoothPermission()) {
+                link.markBluetoothDenied()
+            } else {
+                link.start()
+            }
+        } else {
+            permissionLauncher.launch(needed.toTypedArray())
+        }
+    }
+
+    private fun hasBluetoothPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < 31) return true
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
     }
 }

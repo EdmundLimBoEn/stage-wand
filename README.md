@@ -2,7 +2,7 @@
 
 Stage Wand is a pocket presentation clicker and a trackpad for the computer that is running the deck. Volume up sends Right (next slide). Volume down sends Left (previous slide). Draw the guided square to unlock touch controls for moving the pointer, clicking, scrolling, and switching spaces.
 
-The original pair is a native **iPhone** remote and a **macOS** menu-bar host. This repository also has a **Linux** host, a **Windows** host, and an **Android** remote. Those three speak the same LAN WebSocket protocol as the Mac and iPhone (`Shared/Protocol.swift`). Bluetooth LE direct exists only on the Apple path.
+The original pair is a native **iPhone** remote and a **macOS** menu-bar host. This repository also has a **Linux** host, a **Windows** host, and an **Android** remote. Remotes and hosts speak the same JSON command protocol (`Shared/Protocol.swift`) over LAN WebSocket (`_stagewand._tcp` on port **8787**, fallback **8788–8790**) and over Bluetooth LE GATT (`Shared/Bluetooth.swift`). The computer is the GATT peripheral. The phone is the GATT central.
 
 The Apple pair needs macOS 14+, an iPhone running iOS 17+, Xcode with iOS device support, and XcodeGen. Hardware volume and locked-screen behavior must be tested on a real phone. Linux, Windows, and Android install notes are below.
 
@@ -27,7 +27,7 @@ In Xcode, select the **StageWand** scheme and your connected iPhone, check autom
 
 ## Linux host
 
-The Linux companion injects mouse and key events through `/dev/uinput` and advertises `_stagewand._tcp` on port **8787** (fallback **8788-8790**). It speaks the same WebSocket frames as StageWandMac, so an iPhone or Android remote can drive it.
+The Linux companion injects mouse and key events through `/dev/uinput`, advertises `_stagewand._tcp` on port **8787** (fallback **8788-8790**), and advertises a Bluetooth LE GATT peripheral with the same service as StageWandMac. An iPhone or Android remote can drive it over Wi-Fi or Bluetooth.
 
 The injector is in-process uinput. That works on Wayland and X11 because the kernel presents a virtual evdev device. Do not install xdotool, ydotool, or libei for Stage Wand. extra/xdotool talks to X11 only. extra/ydotool is a second process on the same uinput node, plus a daemon. extra/libei needs a desktop portal that Hyprland and Sway do not fully expose. No AUR package is required.
 
@@ -37,6 +37,8 @@ Build dependencies are extra/go, extra/git, and (for the PKGBUILD) core/gcc. Fro
 
 ```sh
 sudo pacman -S --needed go git
+sudo pacman -S --needed bluez bluez-utils
+sudo systemctl enable --now bluetooth
 cd host
 go build -o stagewand-host ./cmd/stagewand-host
 sudo cp udev/70-stagewand-uinput.rules /etc/udev/rules.d/
@@ -54,7 +56,9 @@ Then run:
 ./stagewand-host
 ```
 
-The process prints the four-digit pairing code, the LAN address, the session type, and whether uinput is writable. Type `k` and Enter to kick the peer and rotate the code. Ctrl+C quits.
+The process prints the four-digit pairing code, the LAN address, the session type, whether uinput is writable, and whether Bluetooth is advertising. Type `k` and Enter to kick the peer and rotate the code. Ctrl+C quits.
+
+If Bluetooth is off, `bluetoothd` is not running, or D-Bus registration fails, the host still serves the LAN WebSocket. The console line `Bluetooth:` names the error. LAN pairing is unchanged.
 
 If `/dev/uinput` is missing or not writable, the host still accepts connections and logs commands. Pointer injection stays off until the module is loaded and the seated user can open `/dev/uinput`. Run `./stagewand-host --diagnose` to print the probe.
 
@@ -71,7 +75,8 @@ That installs `/usr/bin/stagewand-host`, the udev rule under `/usr/lib/udev/rule
 ### Install on Debian or Ubuntu
 
 ```sh
-sudo apt install golang-go git
+sudo apt install golang-go git bluez
+sudo systemctl enable --now bluetooth
 cd host
 go build -o stagewand-host ./cmd/stagewand-host
 sudo cp udev/70-stagewand-uinput.rules /etc/udev/rules.d/
@@ -98,7 +103,7 @@ Chords send Ctrl+Left, Ctrl+Right, and Ctrl+Up. Bind those shortcuts in the comp
 
 ## Windows host
 
-The same `host` module cross-compiles to Windows and injects input with `SendInput`.
+The same `host` module cross-compiles to Windows. It injects input with `SendInput` and advertises the Stage Wand GATT service with WinRT `GattServiceProvider`.
 
 On a Windows machine with Go:
 
@@ -115,7 +120,7 @@ cd host
 GOOS=windows GOARCH=amd64 go build -o stagewand-host.exe ./cmd/stagewand-host
 ```
 
-Allow the app through Windows Firewall when it binds. The console shows the pairing code and listen address. Type `k` and Enter to kick. `--serve`, `--dry-run`, and `--selftest` match the Linux flags.
+Allow the app through Windows Firewall when it binds. Turn Bluetooth on in Windows settings. The console shows the pairing code, listen address, and Bluetooth line. Type `k` and Enter to kick. `--serve`, `--dry-run`, and `--selftest` match the Linux flags. `--serve` does not start Bluetooth.
 
 Chord mapping on Windows is a desktop analogue, not Mission Control:
 
@@ -129,7 +134,7 @@ Enable virtual desktops if you want the space chords. Pointer motion is integer 
 
 ## Android remote
 
-The Android app discovers `_stagewand._tcp`, or you can type `host:port` / a tunnel URL. It authenticates with the four-digit code, sends volume up/down as next/prev, and has square unlock, ARM, trackpad, and the same on-screen keys as iOS.
+The Android app discovers `_stagewand._tcp`, scans for the Stage Wand Bluetooth LE service, or you can type `host:port` / a tunnel URL. It authenticates with the four-digit code, sends volume up/down as next/prev, and has square unlock, ARM, trackpad, and the same on-screen keys as iOS. Bluetooth direct is the default in Settings, matching iOS.
 
 Open the `android/` folder in Android Studio (JDK 21, Android SDK 35) and run the **app** configuration on a phone. From the command line:
 
@@ -138,32 +143,36 @@ cd android
 ./gradlew :protocol:test :app:assembleDebug
 ```
 
-The debug APK is `android/app/build/outputs/apk/debug/app-debug.apk`. Install it with `adb install -r` that path, then allow nearby devices (or location on Android 12 and older) and notifications if the system asks.
+The debug APK is `android/app/build/outputs/apk/debug/app-debug.apk`. Install it with `adb install -r` that path, then allow Bluetooth, nearby devices (or location on Android 12 and older), and notifications if the system asks.
 
 Pairing:
 
-1. Run a host (Mac, Linux, or Windows) on the same LAN.
+1. Run a host (Mac, Linux, or Windows) in the same room for Bluetooth, or on the same LAN for Wi-Fi.
 2. Draw the square to unlock the Android UI.
 3. Enter the host pairing code in Settings, including leading zeros.
-4. If discovery finds nothing, set **Host address or tunnel URL** to `192.168.1.20:8787` with the real IP and port.
+4. Leave **Host address or tunnel URL** empty. Keep **Bluetooth** selected for GATT direct, or switch to **Wi-Fi** for `_stagewand._tcp`.
+5. If Bluetooth stays on Connecting, confirm Bluetooth is on for both devices. If Wi-Fi discovery finds nothing, set **Host address or tunnel URL** to `192.168.1.20:8787` with the real IP and port.
 
 Volume keys are consumed while Stage Wand is in the foreground. A media-playback foreground service tries to keep the process alive and watch music-stream volume changes after you leave the activity. That pocket path is OEM-dependent and untested on a physical phone in this change. Use NEXT/PREV if volume does not arrive.
 
-Android has no Bluetooth-direct transport. Use Wi-Fi, a hotspot, a manual `host:port`, or the existing Cloudflare tunnel URL from a Mac host.
+Android has Bluetooth direct and Wi-Fi nearby. A manual `host:port` or Cloudflare tunnel URL overrides both.
 
 ## Wire protocol
 
 `Shared/Protocol.swift` is the source of truth. `Shared/protocol.schema.json` and `Shared/protocol-fixtures.json` are the cross-language copies used by Go and Kotlin tests. Do not add a new `t` value in Swift without updating the fixtures. The fixture check greps `Protocol.swift` and fails if they drift.
 
-First frame must be `auth` within 2 seconds. A valid code displaces the current peer. The server sends WebSocket pings every 3 seconds and drops a peer after 6 seconds without a pong.
+First frame must be `auth` within 2 seconds on the WebSocket. A valid code displaces the current peer. The server sends WebSocket pings every 3 seconds and drops a peer after 6 seconds without a pong.
+
+Bluetooth LE uses the same JSON objects as one ATT write-without-response (command) and one notification (reply). UUIDs live in `Shared/Bluetooth.swift` and are copied into `host/internal/ble/uuids.go` and `android/protocol/.../Bluetooth.kt`. There is no extra BLE header. The default 23-byte ATT MTU cannot hold `{"t":"auth","code":"0000"}`, so the phone exchanges a larger MTU before it sends auth. iOS does that in CoreBluetooth. Android calls `requestMtu(517)`. The host accepts the central's MTU. Kick still rotates the code. BlueZ cannot always address a notification to one central, so a failed auth from a second phone disconnects that device instead of broadcasting `badauth` to the authed phone.
 
 ## What works here vs what needs a device
 
 Verified in this repository's CI environment:
 
-- Go protocol parser against the golden fixtures
+- Go protocol parser against the golden fixtures, including BLE UUID lockstep with `Shared/Bluetooth.swift`
 - Linux host WebSocket behavior (`bun scripts/ws-smoke.ts --spawn-host`): auth window, `badauth`, displace, 200 ordered moves, ping/pong
-- Windows `GOOS=windows` compile of the same host
+- Linux host BLE session policy without a radio (`go test ./internal/ble`): auth, `badauth`, displace, kick, move range
+- Windows `GOOS=windows` compile of the same host, including the WinRT GATT adapter
 - Kotlin protocol, square-unlock, command-queue, and connection-URL tests
 - `./gradlew :app:assembleDebug`
 - Arch Linux `archlinux:latest` with `pacman -S --needed go git gcc base-devel`, `bash host/arch/check.sh`, and `makepkg -f` for `stagewand-host`
@@ -174,11 +183,11 @@ Not verified on hardware in this change:
 - `SendInput` on a Windows desktop, including firewall and virtual-desktop chords
 - Android NSD discovery, volume keys, lock-screen/pocket volume, haptics, and multi-touch trackpad on a phone
 - An iPhone talking to the Linux or Windows host, or Android talking to StageWandMac
-- Bluetooth direct on anything other than the existing Apple pair
+- Bluetooth LE on a physical radio: BlueZ advertising, WinRT `GattServiceProvider`, Android `BluetoothGatt`, ATT MTU exchange, and pointer smoothness
 
 ## First connection
 
-1. Keep Bluetooth enabled on both devices. Allow Bluetooth for StageWandMac when macOS asks on first launch. In phone Settings, choose **Bluetooth direct** (the default) and allow Bluetooth when iOS asks. No Wi‑Fi is needed for this route. **Wi‑Fi nearby** uses your network or Apple peer-to-peer Wi‑Fi instead; if that fails on the venue network, enable Personal Hotspot on the iPhone and join it from the Mac.
+1. Keep Bluetooth enabled on both devices. Allow Bluetooth for the host when the OS asks on first launch. In phone Settings, choose **Bluetooth direct** (the default) and allow Bluetooth when the phone asks. No Wi‑Fi is needed for this route. **Wi‑Fi nearby** uses your network or, on Apple, peer-to-peer Wi‑Fi instead; if that fails on the venue network, enable Personal Hotspot on the iPhone and join it from the computer.
 2. On the Mac, allow StageWandMac in **System Settings → Privacy & Security → Accessibility**. If an old ad-hoc build was granted access, remove that old entry, add `~/Applications/StageWandMac.app`, enable it, and relaunch. The development-certificate signature now stays stable across rebuilds.
 3. Choose **Allow** when the macOS firewall asks about incoming connections.
 4. Allow **Local Network** access on the phone. If denied, enable Stage Wand in **Settings → Privacy & Security → Local Network** and reopen the app.
@@ -206,7 +215,7 @@ The phone plays a silent audio loop to support pocket operation. Volume recenter
 
 | Symptom | What to check |
 | --- | --- |
-| Bluetooth direct stays on Connecting | Check Bluetooth is on for both devices, that StageWandMac is allowed under **System Settings → Privacy & Security → Bluetooth**, and that Stage Wand is allowed under phone **Settings → Privacy & Security → Bluetooth**. Relaunch the Mac app after granting. Only one Stage Wand Mac should be advertising nearby. Fall back to Wi‑Fi nearby or the hotspot if it still fails. |
+| Bluetooth direct stays on Connecting | Check Bluetooth is on for both devices. On a Mac, allow StageWandMac under **System Settings → Privacy & Security → Bluetooth**. On Linux, run `bluetoothctl show` and confirm the adapter is powered; the host talks to BlueZ over D-Bus. On Windows, confirm Bluetooth is on in Settings. On the phone, allow Bluetooth for Stage Wand. Relaunch the host after granting. Only one Stage Wand host should be advertising nearby. Fall back to Wi‑Fi nearby or the hotspot if it still fails. |
 | No Mac appears through Bonjour | Check Local Network permission and the shared network. In phone Settings, enter the Mac's Wi-Fi IP address in Manual Host, such as `192.168.1.20:8787`, substituting the actual IP and popover port. A host without a port uses 8787. Find the IP in the Mac's Wi-Fi network details. Discovery uses `_stagewand._tcp`. |
 | Manual connection also fails | Check the popover port and firewall permission. Guest Wi-Fi may isolate clients; use the iPhone hotspot fallback. Update or clear Manual Host after changing networks. |
 | Connected but the Mac ignores input | Ensure the signed app in `~/Applications` is the enabled Accessibility entry, draw the square to unlock touch controls, and put the intended Mac app frontmost. |
@@ -259,7 +268,7 @@ The tunnel URL contains a random 256-bit secret path, checked before traffic rea
 
 ## Cursor latency
 
-Use **Settings → Bluetooth direct** for trackpad control. The phone connects to the Mac over Bluetooth LE as a GATT central; the Mac advertises a Stage Wand service and receives commands as write-without-response packets. This route does not depend on Wi‑Fi, a router, or the venue network, and it avoids Apple peer-to-peer Wi‑Fi (AWDL), which time-slices the radio and produces the stop-start cursor motion seen in Wi‑Fi nearby mode when no shared network is available. Expect roughly 30 ms update cadence, which is what the BLE connection interval allows between two Apple devices.
+Use **Settings → Bluetooth direct** for trackpad control. The phone connects as a GATT central. The host advertises service `5A3E0001-8B6C-4B1E-9F8D-2C7A1D4E6F01`, receives commands on the write-without-response characteristic, and sends `status` / `bye` as notifications. This route does not depend on Wi‑Fi, a router, or the venue network. On Apple it also avoids peer-to-peer Wi‑Fi (AWDL), which time-slices the radio and produces the stop-start cursor motion seen in Wi‑Fi nearby mode when no shared network is available. Expect roughly 30 ms update cadence on Apple radios. Linux BlueZ and Windows WinRT use the same JSON and UUIDs. The connection interval depends on those stacks.
 
 **Wi‑Fi nearby** remains available and is smoothest when both devices share the same Wi‑Fi or the iPhone Personal Hotspot. Cloudflare remains available when neither direct route works; its latency depends on the Internet route.
 

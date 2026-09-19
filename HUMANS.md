@@ -22,14 +22,14 @@ Physical setup and acceptance checks for Stage Wand. Start with [README.md](READ
 
 - [x] Commit and push to https://github.com/EdmundLimBoEn/stage-wand.
 
-- [ ] Arch Linux host: `sudo pacman -S --needed go git`, build `host/stagewand-host`, install `host/udev/70-stagewand-uinput.rules` and `host/modules-load.d/uinput.conf`, `sudo modprobe uinput`, log out of the graphical session and back in, run `./stagewand-host --diagnose`, then `./stagewand-host`. Confirm the pairing code, LAN address, and that Input shows uinput ready with wayland or x11.
-- [ ] Arch Linux host: pair an iPhone or Android remote on Hyprland, Sway, or another Wayland session, then verify next/prev, pointer, click, scroll, and Ctrl+arrow chords in the frontmost app.
-- [ ] Arch Linux host: repeat pointer and click on an X11 session (i3 or Xfce) if you use one.
-- [ ] Debian or Ubuntu host: same uinput udev and modules-load files, then pair a remote and verify injection.
-- [ ] Windows host: run `stagewand-host.exe`, allow the firewall, pair a remote, and verify `SendInput` next/prev, pointer, and Win+Ctrl+Left/Right plus Win+Tab.
-- [ ] Android: install the debug APK, allow nearby devices or enter a manual `host:port`, draw the square, pair with the four-digit code, and confirm volume up/down while the app is in the foreground.
+- [ ] Arch Linux host: `sudo pacman -S --needed go git`, `sudo pacman -S --needed bluez bluez-utils`, `sudo systemctl enable --now bluetooth`, build `host/stagewand-host`, install `host/udev/70-stagewand-uinput.rules` and `host/modules-load.d/uinput.conf`, `sudo modprobe uinput`, log out of the graphical session and back in, run `./stagewand-host --diagnose`, then `./stagewand-host`. Confirm the pairing code, LAN address, that Input shows uinput ready with wayland or x11, and that Bluetooth shows advertising.
+- [ ] Arch Linux host: pair an iPhone or Android remote on Hyprland, Sway, or another Wayland session over Bluetooth direct, then verify next/prev, pointer, click, scroll, and Ctrl+arrow chords in the frontmost app.
+- [ ] Arch Linux host: repeat pointer and click over Wi-Fi nearby, and on an X11 session (i3 or Xfce) if you use one.
+- [ ] Debian or Ubuntu host: same uinput udev and modules-load files plus `bluez`, then pair a remote over Bluetooth and Wi-Fi and verify injection.
+- [ ] Windows host: run `stagewand-host.exe`, allow the firewall, turn Bluetooth on, pair a remote over Bluetooth and over LAN, and verify `SendInput` next/prev, pointer, and Win+Ctrl+Left/Right plus Win+Tab.
+- [ ] Android: install the debug APK, allow Bluetooth and nearby devices or enter a manual `host:port`, draw the square, pair with the four-digit code, and confirm volume up/down while the app is in the foreground.
 - [ ] Android: record whether volume still works after locking the screen or leaving the app. Treat failure as expected until proven on that OEM.
-- [ ] Confirm Android does not offer Bluetooth direct, and that Wi-Fi, hotspot, manual host, or a Mac tunnel URL is the route you used.
+- [ ] Confirm Android Bluetooth direct shows `Bluetooth · <host name>` and that Wi-Fi nearby still works when you switch Connection in Settings.
 
 - [ ] Confirm the Mac pairing window is visible on launch/reopen.
 - [ ] Confirm taps, incomplete squares, diagonal swipes, and rapid scribbles do not unlock volume mode; a deliberate full square does.

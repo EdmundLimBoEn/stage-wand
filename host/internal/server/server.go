@@ -66,10 +66,14 @@ func (s *Session) Port() int {
 	return s.port
 }
 
-func (s *Session) setPeer(peer string) {
+func (s *Session) SetPeer(peer string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.peer = peer
+}
+
+func (s *Session) setPeer(peer string) {
+	s.SetPeer(peer)
 }
 
 func (s *Session) setPort(port int) {
