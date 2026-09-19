@@ -11,6 +11,10 @@ import (
 
 type Unsupported struct{}
 
+func Diagnose() Probe {
+	return Probe{Hint: fmt.Sprintf("input injection is not implemented on %s", runtime.GOOS)}
+}
+
 func Open() (Injector, error) {
 	return nil, fmt.Errorf("input injection is not implemented on %s", runtime.GOOS)
 }

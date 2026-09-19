@@ -4,10 +4,9 @@ package input
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
-	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/protocol"
@@ -15,31 +14,31 @@ import (
 )
 
 const (
-	busVirtual         = 0x06
-	uinputMaxNameSize  = 80
-	absCnt             = 64
-	evSyn              = 0x00
-	evKey              = 0x01
-	evRel              = 0x02
-	synReport          = 0
-	relX               = 0x00
-	relY               = 0x01
-	relHWheel          = 0x06
-	relWheel           = 0x08
-	relHWheelHiRes     = 0x0c
-	relWheelHiRes      = 0x0b
-	btnLeft            = 0x110
-	btnRight           = 0x111
-	keyEsc             = 1
-	keyLeftCtrl        = 29
-	keyUp              = 103
-	keyLeft            = 105
-	keyRight           = 106
-	uiDevCreate        = 0x5501
-	uiDevDestroy       = 0x5502
-	uiSetEvbit         = 0x40045564
-	uiSetKeybit        = 0x40045565
-	uiSetRelbit        = 0x40045566
+	busVirtual        = 0x06
+	uinputMaxNameSize = 80
+	absCnt            = 64
+	evSyn             = 0x00
+	evKey             = 0x01
+	evRel             = 0x02
+	synReport         = 0
+	relX              = 0x00
+	relY              = 0x01
+	relHWheel         = 0x06
+	relWheel          = 0x08
+	relHWheelHiRes    = 0x0c
+	relWheelHiRes     = 0x0b
+	btnLeft           = 0x110
+	btnRight          = 0x111
+	keyEsc            = 1
+	keyLeftCtrl       = 29
+	keyUp             = 103
+	keyLeft           = 105
+	keyRight          = 106
+	uiDevCreate       = 0x5501
+	uiDevDestroy      = 0x5502
+	uiSetEvbit        = 0x40045564
+	uiSetKeybit       = 0x40045565
+	uiSetRelbit       = 0x40045566
 )
 
 type inputID struct {
@@ -67,19 +66,53 @@ type inputEvent struct {
 }
 
 type UInput struct {
-	file *os.File
+	file  *os.File
+	probe Probe
+}
+
+var afterCreate = 100 * time.Millisecond
+
+func Diagnose() Probe {
+	kind, desktop, display := SessionFromEnv(os.Getenv)
+	p := Probe{
+		Device:  "/dev/uinput",
+		Session: kind,
+		Desktop: desktop,
+		Display: display,
+	}
+	_, err := os.Stat(p.Device)
+	if err != nil {
+		p.Exists = false
+		if !os.IsNotExist(err) {
+			p.OpenErr = err.Error()
+		}
+		return FinishProbe(p)
+	}
+	p.Exists = true
+	file, err := os.OpenFile(p.Device, os.O_WRONLY, 0)
+	if err != nil {
+		p.Writable = false
+		p.OpenErr = err.Error()
+		return FinishProbe(p)
+	}
+	file.Close()
+	p.Writable = true
+	return FinishProbe(p)
 }
 
 func Open() (Injector, error) {
-	file, err := os.OpenFile("/dev/uinput", os.O_WRONLY|syscall.O_NONBLOCK, 0)
+	probe := Diagnose()
+	file, err := os.OpenFile("/dev/uinput", os.O_WRONLY, 0)
 	if err != nil {
-		return nil, fmt.Errorf("open /dev/uinput: %w", err)
+		return nil, fmt.Errorf("open /dev/uinput: %w (%s)", err, probe.Hint)
 	}
-	device := &UInput{file: file}
+	device := &UInput{file: file, probe: probe}
 	if err := device.setup(); err != nil {
 		file.Close()
 		return nil, err
 	}
+	device.probe.Writable = true
+	device.probe = FinishProbe(device.probe)
 	return device, nil
 }
 
@@ -110,11 +143,15 @@ func (u *UInput) setup() error {
 	if err := binary.Write(u.file, binary.LittleEndian, setup); err != nil {
 		return err
 	}
-	return ioctl(fd, uiDevCreate, 0)
+	if err := ioctl(fd, uiDevCreate, 0); err != nil {
+		return err
+	}
+	time.Sleep(afterCreate)
+	return nil
 }
 
 func (u *UInput) Ready() (bool, string) {
-	return true, "uinput ready"
+	return u.probe.Ready()
 }
 
 func (u *UInput) Close() error {
@@ -259,8 +296,9 @@ var nativeEndian = func() binary.ByteOrder {
 }()
 
 func OpenOrError() (Injector, error) {
-	if _, err := os.Stat("/dev/uinput"); errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("/dev/uinput is missing. Load the uinput module: sudo modprobe uinput")
+	probe := Diagnose()
+	if !probe.Exists || !probe.Writable {
+		return nil, fmt.Errorf("%s", probe.Hint)
 	}
 	return Open()
 }

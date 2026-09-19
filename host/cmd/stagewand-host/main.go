@@ -22,12 +22,18 @@ import (
 func main() {
 	serve := flag.Bool("serve", false, "headless test server with pairing code 0000")
 	selftest := flag.Bool("selftest", false, "inject a short movement, click, Esc, and scroll")
+	diagnose := flag.Bool("diagnose", false, "print uinput and session probe, then exit")
 	codeFlag := flag.String("code", "", "pairing code (default: random 4 digits, or 0000 with --serve)")
 	dryRun := flag.Bool("dry-run", false, "log commands without injecting input")
 	name := flag.String("name", "", "mDNS instance name (default: hostname)")
 	flag.Parse()
 	if os.Getenv("STAGEWAND_DRY_RUN") == "1" {
 		*dryRun = true
+	}
+
+	if *diagnose {
+		fmt.Print(input.Diagnose().Report())
+		return
 	}
 
 	if *selftest {
@@ -110,35 +116,53 @@ func main() {
 }
 
 func openInjector(logOnly bool) (input.Injector, string) {
+	probe := input.Diagnose()
 	if logOnly {
-		return input.Logging{}, "dry-run (commands logged, not injected)"
+		return input.Logging{}, "dry-run (commands logged, not injected); session " + string(probe.Session)
 	}
 	injector, err := input.OpenOrError()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "input injection unavailable: %v\n", err)
-		fmt.Fprintf(os.Stderr, "continuing in dry-run. See README for uinput/SendInput setup.\n")
-		return input.Logging{}, "dry-run: " + err.Error()
+		fmt.Fprintf(os.Stderr, "continuing in dry-run. See README Linux host for Arch uinput setup.\n")
+		return input.Logging{}, "dry-run: " + probe.Hint
 	}
-	return injector, ""
+	_, note := injector.Ready()
+	return injector, note
 }
 
 func runSelfTest(dryRun bool) int {
-	injector, _ := openInjector(dryRun)
+	probe := input.Diagnose()
+	fmt.Print(probe.Report())
+	if dryRun {
+		injector := input.Logging{}
+		applySelfTest(injector)
+		fmt.Println("SELFTEST PASS: dry-run posted pointer movement, left click, Esc, and scroll.")
+		return 0
+	}
+	injector, err := input.OpenOrError()
+	if err != nil {
+		fmt.Printf("SELFTEST FAIL: %s\n", err)
+		return 1
+	}
 	defer injector.Close()
 	ok, detail := injector.Ready()
-	if !ok && !dryRun {
+	if !ok {
 		fmt.Printf("SELFTEST FAIL: %s\n", detail)
 		return 1
 	}
 	fmt.Printf("SELFTEST injector: %s\n", detail)
+	applySelfTest(injector)
+	fmt.Println("SELFTEST PASS: Posted pointer movement, left click, Esc, and scroll.")
+	return 0
+}
+
+func applySelfTest(injector input.Injector) {
 	_ = injector.Apply(protocol.Move{Dx: 100, Dy: 0})
 	time.Sleep(100 * time.Millisecond)
 	_ = injector.Apply(protocol.Move{Dx: -100, Dy: 0})
 	_ = injector.Apply(protocol.Click{Button: protocol.ButtonLeft})
 	_ = injector.Apply(protocol.KeyPress{Key: protocol.KeyEsc})
 	_ = injector.Apply(protocol.Scroll{Dx: 0, Dy: 3})
-	fmt.Println("SELFTEST PASS: Posted pointer movement, left click, Esc, and scroll.")
-	return 0
 }
 
 func randomCode() string {

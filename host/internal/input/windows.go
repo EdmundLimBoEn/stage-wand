@@ -11,28 +11,28 @@ import (
 )
 
 const (
-	inputMouse    = 0
-	inputKeyboard = 1
-	mouseMove     = 0x0001
-	mouseLeftDown = 0x0002
-	mouseLeftUp   = 0x0004
+	inputMouse     = 0
+	inputKeyboard  = 1
+	mouseMove      = 0x0001
+	mouseLeftDown  = 0x0002
+	mouseLeftUp    = 0x0004
 	mouseRightDown = 0x0008
-	mouseRightUp  = 0x0010
-	mouseWheel    = 0x0800
-	mouseHWheel   = 0x1000
-	keyUp         = 0x0002
-	vkLeft        = 0x25
-	vkUp          = 0x26
-	vkRight       = 0x27
-	vkEscape      = 0x1B
-	vkControl     = 0x11
-	vkLWin        = 0x5B
-	vkTab         = 0x09
+	mouseRightUp   = 0x0010
+	mouseWheel     = 0x0800
+	mouseHWheel    = 0x1000
+	keyUp          = 0x0002
+	vkLeft         = 0x25
+	vkUp           = 0x26
+	vkRight        = 0x27
+	vkEscape       = 0x1B
+	vkControl      = 0x11
+	vkLWin         = 0x5B
+	vkTab          = 0x09
 )
 
 var (
-	user32           = windows.NewLazySystemDLL("user32.dll")
-	procSendInput    = user32.NewProc("SendInput")
+	user32        = windows.NewLazySystemDLL("user32.dll")
+	procSendInput = user32.NewProc("SendInput")
 )
 
 type mouseInput struct {
@@ -57,6 +57,10 @@ type kbdInput struct {
 }
 
 type SendInputInjector struct{}
+
+func Diagnose() Probe {
+	return Probe{Device: "SendInput", Exists: true, Writable: true, Hint: "SendInput ready"}
+}
 
 func Open() (Injector, error) {
 	return SendInputInjector{}, nil
