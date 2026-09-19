@@ -32,15 +32,16 @@ build() {
   export CGO_CFLAGS="${CFLAGS}"
   export CGO_CXXFLAGS="${CXXFLAGS}"
   export CGO_LDFLAGS="${LDFLAGS}"
-  export GOFLAGS="-buildmode=pie -trimpath -mod=readonly -modcacherw -buildvcs=false"
-  go build -ldflags "-linkmode=external" -o "$srcdir/build/stagewand-host" ./cmd/stagewand-host
+  GOFLAGS="-buildmode=pie -trimpath -mod=readonly -modcacherw -buildvcs=false" \
+    go build -ldflags "-linkmode=external" -o "$srcdir/build/stagewand-host" ./cmd/stagewand-host
 }
 
 check() {
   cd "$_repodir/host"
   export GOPATH="$srcdir/go"
   export GOCACHE="$srcdir/cache"
-  go test ./...
+  GOFLAGS="-mod=readonly -modcacherw -buildvcs=false" \
+    go test ./internal/... ./cmd/...
 }
 
 package() {

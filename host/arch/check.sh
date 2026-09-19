@@ -49,7 +49,7 @@ go version
 
 cd "$root/host"
 export GOFLAGS="${GOFLAGS:+$GOFLAGS }-buildvcs=false"
-go test ./...
+go test ./internal/... ./cmd/... .
 go build -o stagewand-host ./cmd/stagewand-host
 ./stagewand-host --diagnose
 ./stagewand-host --selftest --dry-run

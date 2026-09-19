@@ -3,7 +3,6 @@ package packaging_test
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -43,6 +42,12 @@ func TestArchUinputPackaging(t *testing.T) {
 	if !strings.Contains(pkgbuild, "-buildvcs=false") {
 		t.Fatal("PKGBUILD must disable VCS stamping so extra/go can build outside a trusted git tree")
 	}
+	if strings.Contains(pkgbuild, "go test ./...") {
+		t.Fatal("PKGBUILD check() must not run go test ./... from host/; that walks arch/pkg during makepkg")
+	}
+	if !strings.Contains(pkgbuild, "go test ./internal/... ./cmd/...") {
+		t.Fatal("PKGBUILD check() must test ./internal/... and ./cmd/...")
+	}
 	readme := readFile(t, filepath.Join(hostDir, "..", "README.md"))
 	if !strings.Contains(readme, "pacman -S --needed go git") {
 		t.Fatal("README must show the Arch pacman install line")
@@ -60,11 +65,20 @@ func TestArchUinputPackaging(t *testing.T) {
 
 func testHostDir(t *testing.T) string {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
 	}
-	return filepath.Dir(file)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("go.mod not found from working directory")
+		}
+		dir = parent
+	}
 }
 
 func readFile(t *testing.T, path string) string {
