@@ -55,6 +55,8 @@ jobs:
           pacman -Syu --noconfirm --needed archlinux-keyring
           pacman -Syu --noconfirm --needed go git gcc base-devel namcap
       - uses: actions/checkout@v4
+      - name: Trust the checkout for git and Go VCS
+        run: git config --global --add safe.directory '*'
       - name: Prove Arch install path
         run: bash host/arch/check.sh
       - name: Build and install the PKGBUILD

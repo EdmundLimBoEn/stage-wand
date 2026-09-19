@@ -40,6 +40,9 @@ func TestArchUinputPackaging(t *testing.T) {
 	if !strings.Contains(pkgbuild, "makedepends=('go' 'gcc')") {
 		t.Fatal("PKGBUILD must build with extra/go and core/gcc")
 	}
+	if !strings.Contains(pkgbuild, "-buildvcs=false") {
+		t.Fatal("PKGBUILD must disable VCS stamping so extra/go can build outside a trusted git tree")
+	}
 	readme := readFile(t, filepath.Join(hostDir, "..", "README.md"))
 	if !strings.Contains(readme, "pacman -S --needed go git") {
 		t.Fatal("README must show the Arch pacman install line")

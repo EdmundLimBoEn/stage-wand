@@ -27,6 +27,7 @@ grep -q 'apt install golang-go git' "$readme" || fail "README must show the Debi
 
 pkgbuild="$root/host/arch/PKGBUILD"
 grep -q "makedepends=('go' 'gcc')" "$pkgbuild" || fail "PKGBUILD must use extra/go and core/gcc"
+grep -q -- '-buildvcs=false' "$pkgbuild" || fail "PKGBUILD must set -buildvcs=false"
 for dep in ydotool xdotool libei; do
   if grep -q "$dep" "$pkgbuild"; then
     fail "PKGBUILD must not depend on $dep"
@@ -47,6 +48,7 @@ command -v go >/dev/null || fail "go is required"
 go version
 
 cd "$root/host"
+export GOFLAGS="${GOFLAGS:+$GOFLAGS }-buildvcs=false"
 go test ./...
 go build -o stagewand-host ./cmd/stagewand-host
 ./stagewand-host --diagnose
