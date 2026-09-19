@@ -29,29 +29,72 @@ In Xcode, select the **StageWand** scheme and your connected iPhone, check autom
 
 The Linux companion injects mouse and key events through `/dev/uinput` and advertises `_stagewand._tcp` on port **8787** (fallback **8788-8790**). It speaks the same WebSocket frames as StageWandMac, so an iPhone or Android remote can drive it.
 
-Install Go 1.22 or newer, then from the repository root:
+The injector is in-process uinput. That works on Wayland and X11 because the kernel presents a virtual evdev device. Do not install xdotool, ydotool, or libei for Stage Wand. extra/xdotool talks to X11 only. extra/ydotool is a second process on the same uinput node, plus a daemon. extra/libei needs a desktop portal that Hyprland and Sway do not fully expose. No AUR package is required.
+
+### Install on Arch Linux
+
+Build dependencies are extra/go, extra/git, and (for the PKGBUILD) core/gcc. From the repository root:
 
 ```sh
+sudo pacman -S --needed go git
 cd host
 go build -o stagewand-host ./cmd/stagewand-host
+sudo cp udev/70-stagewand-uinput.rules /etc/udev/rules.d/
+sudo cp modules-load.d/uinput.conf /etc/modules-load.d/stagewand-uinput.conf
+sudo modprobe uinput
+sudo udevadm control --reload
+sudo udevadm trigger --action=add --subsystem-match=misc
+```
+
+Log out of the graphical session and log in again so systemd-logind applies the `uaccess` ACL on `/dev/uinput`. Do not add your user to the `input` group.
+
+Then run:
+
+```sh
 ./stagewand-host
 ```
 
-The process prints the four-digit pairing code, the LAN address, and whether uinput is ready. Type `k` and Enter to kick the peer and rotate the code. Ctrl+C quits.
+The process prints the four-digit pairing code, the LAN address, the session type, and whether uinput is writable. Type `k` and Enter to kick the peer and rotate the code. Ctrl+C quits.
 
-If `/dev/uinput` is missing or not writable, the host still accepts connections and logs commands. Pointer injection is off until you load the module and grant access:
+If `/dev/uinput` is missing or not writable, the host still accepts connections and logs commands. Pointer injection stays off until the module is loaded and the seated user can open `/dev/uinput`. Run `./stagewand-host --diagnose` to print the probe.
+
+Optional package from this checkout (needs core/gcc and the `base-devel` group for `makepkg`):
 
 ```sh
-sudo modprobe uinput
-sudo cp host/udev/99-stagewand-uinput.rules /etc/udev/rules.d/
-sudo udevadm control --reload
-sudo udevadm trigger
-sudo usermod -aG input "$USER"
+sudo pacman -S --needed go git gcc base-devel
+cd host/arch
+makepkg -si
 ```
 
-Log out and back in so the `input` group applies. Run `./stagewand-host --selftest` to post a short move, click, Esc, and scroll. Use `--dry-run` to skip injection. Use `--serve` for the headless test server with code `0000`.
+That installs `/usr/bin/stagewand-host`, the udev rule under `/usr/lib/udev/rules.d/`, and a modules-load file so `uinput` loads at boot.
 
-Chords send Ctrl+Left, Ctrl+Right, and Ctrl+Up. Bind those shortcuts in your desktop if you want space switching. Scroll uses relative wheel units, so distance will not match macOS pixel scrolling exactly.
+### Install on Debian or Ubuntu
+
+```sh
+sudo apt install golang-go git
+cd host
+go build -o stagewand-host ./cmd/stagewand-host
+sudo cp udev/70-stagewand-uinput.rules /etc/udev/rules.d/
+sudo cp modules-load.d/uinput.conf /etc/modules-load.d/stagewand-uinput.conf
+sudo modprobe uinput
+sudo udevadm control --reload
+sudo udevadm trigger --action=add --subsystem-match=misc
+```
+
+Log out of the graphical session and log in again, then run `./stagewand-host`.
+
+### Session types
+
+| Session | uinput |
+| --- | --- |
+| Hyprland, Sway, niri, river, labwc, Wayfire | Works on Wayland |
+| GNOME or KDE Plasma on Wayland | Works |
+| i3, dwm, Xfce, Cinnamon, GNOME or KDE on X11 | Works |
+| SSH or a tty with no seat | The `uaccess` ACL often does not apply. Run the host on the local graphical session. |
+
+Run `./stagewand-host --selftest` after login to post a short move, click, Esc, and scroll. Use `--dry-run` to skip injection. Use `--serve` for the headless test server with code `0000`.
+
+Chords send Ctrl+Left, Ctrl+Right, and Ctrl+Up. Bind those shortcuts in the compositor if you want space switching. Scroll uses relative wheel units, so distance will not match macOS pixel scrolling.
 
 ## Windows host
 
@@ -123,10 +166,11 @@ Verified in this repository's CI environment:
 - Windows `GOOS=windows` compile of the same host
 - Kotlin protocol, square-unlock, command-queue, and connection-URL tests
 - `./gradlew :app:assembleDebug`
+- Arch Linux `archlinux:latest` with `pacman -S --needed go git gcc base-devel`, `bash host/arch/check.sh`, and `makepkg -f` for `stagewand-host`
 
 Not verified on hardware in this change:
 
-- `/dev/uinput` injection on a Linux desktop (needs the udev rule and a seat)
+- `/dev/uinput` injection on an Arch desktop (needs the udev rule, a loaded `uinput` module, and a graphical seat)
 - `SendInput` on a Windows desktop, including firewall and virtual-desktop chords
 - Android NSD discovery, volume keys, lock-screen/pocket volume, haptics, and multi-touch trackpad on a phone
 - An iPhone talking to the Linux or Windows host, or Android talking to StageWandMac
@@ -190,6 +234,7 @@ bun scripts/protocol-fixtures-check.ts
 bun scripts/ws-smoke.ts --spawn
 bun scripts/ws-smoke.ts --spawn-host
 (cd host && go test ./... && go build -o stagewand-host ./cmd/stagewand-host && GOOS=windows GOARCH=amd64 go build -o stagewand-host.exe ./cmd/stagewand-host)
+bash host/arch/check.sh
 (cd android && ./gradlew :protocol:test :app:assembleDebug)
 ```
 

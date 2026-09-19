@@ -30,11 +30,44 @@ jobs:
         run: |
           go test ./...
           go build -o stagewand-host ./cmd/stagewand-host
+          ./stagewand-host --diagnose
+          ./stagewand-host --selftest --dry-run
       - name: Cross-compile Windows host
         working-directory: host
         run: GOOS=windows GOARCH=amd64 go build -o stagewand-host.exe ./cmd/stagewand-host
       - name: WebSocket smoke against Go host
         run: bun scripts/ws-smoke.ts --spawn-host
+
+  host-arch:
+    name: host (Arch Linux)
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install extra and core packages
+        run: |
+          if grep -q '^DownloadUser' /etc/pacman.conf; then
+            sed -i 's/^DownloadUser/#DownloadUser/' /etc/pacman.conf
+          fi
+          if ! grep -q '^DisableSandbox' /etc/pacman.conf; then
+            printf '\nDisableSandbox\n' >> /etc/pacman.conf
+          fi
+          pacman -Syu --noconfirm --needed archlinux-keyring
+          pacman -Syu --noconfirm --needed go git gcc base-devel namcap
+      - uses: actions/checkout@v4
+      - name: Prove Arch install path
+        run: bash host/arch/check.sh
+      - name: Build and install the PKGBUILD
+        run: |
+          useradd -m builder
+          cp -a "$GITHUB_WORKSPACE" /home/builder/stage-wand
+          chown -R builder:builder /home/builder/stage-wand
+          su - builder -c 'cd /home/builder/stage-wand/host/arch && makepkg -f --noconfirm'
+          pacman -U --noconfirm /home/builder/stage-wand/host/arch/stagewand-host-*.pkg.tar.zst
+          namcap /home/builder/stage-wand/host/arch/stagewand-host-*.pkg.tar.zst || true
+          command -v stagewand-host
+          stagewand-host --diagnose
+          stagewand-host --selftest --dry-run
 
   android:
     runs-on: ubuntu-latest
