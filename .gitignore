@@ -6,3 +6,13 @@ build/
 DerivedData/
 *.xcodeproj/
 *.app/
+android/.gradle/
+android/local.properties
+android/.idea/
+android/**/build/
+host/stagewand-host
+host/stagewand-host.exe
+host/arch/pkg/
+host/arch/src/
+host/arch/*.pkg.tar.*
+host/arch/*.log

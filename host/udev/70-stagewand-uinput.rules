@@ -1,0 +1,2 @@
+# Must sort before 73-seat-late.rules or TAG+="uaccess" is ignored.
+ACTION!="remove", KERNEL=="uinput", SUBSYSTEM=="misc", MODE="0660", TAG+="uaccess", OPTIONS+="static_node=uinput"

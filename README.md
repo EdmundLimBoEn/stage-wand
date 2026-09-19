@@ -1,8 +1,10 @@
 # Stage Wand
 
-Stage Wand turns an iPhone into a pocket presentation clicker and a trackpad for your Mac. Volume up sends Right (next slide); volume down sends Left (previous slide) to the frontmost Mac app. Draw the guided square to unlock touch controls for moving the pointer, clicking, scrolling, and switching spaces.
+Stage Wand is a pocket presentation clicker and a trackpad for the computer that is running the deck. Volume up sends Right (next slide). Volume down sends Left (previous slide). Draw the guided square to unlock touch controls for moving the pointer, clicking, scrolling, and switching spaces.
 
-Requires macOS 14+, an iPhone running iOS 17+, Xcode with iOS device support, and XcodeGen. Hardware volume and locked-screen behavior must be tested on a real phone.
+The original pair is a native **iPhone** remote and a **macOS** menu-bar host. This repository also has a **Linux** host, a **Windows** host, and an **Android** remote. Those three speak the same LAN WebSocket protocol as the Mac and iPhone (`Shared/Protocol.swift`). Bluetooth LE direct exists only on the Apple path.
+
+The Apple pair needs macOS 14+, an iPhone running iOS 17+, Xcode with iOS device support, and XcodeGen. Hardware volume and locked-screen behavior must be tested on a real phone. Linux, Windows, and Android install notes are below.
 
 ## Build and run
 
@@ -22,6 +24,157 @@ open ios/StageWand.xcodeproj
 ```
 
 In Xcode, select the **StageWand** scheme and your connected iPhone, check automatic signing with team **DUU8J39BA7**, and choose **Product → Run**. Enable Developer Mode on the phone if Xcode requests it. If launch is blocked by an untrusted developer, open **Settings → General → VPN & Device Management** on the phone, trust the developer profile, then Run again.
+
+## Linux host
+
+The Linux companion injects mouse and key events through `/dev/uinput` and advertises `_stagewand._tcp` on port **8787** (fallback **8788-8790**). It speaks the same WebSocket frames as StageWandMac, so an iPhone or Android remote can drive it.
+
+The injector is in-process uinput. That works on Wayland and X11 because the kernel presents a virtual evdev device. Do not install xdotool, ydotool, or libei for Stage Wand. extra/xdotool talks to X11 only. extra/ydotool is a second process on the same uinput node, plus a daemon. extra/libei needs a desktop portal that Hyprland and Sway do not fully expose. No AUR package is required.
+
+### Install on Arch Linux
+
+Build dependencies are extra/go, extra/git, and (for the PKGBUILD) core/gcc. From the repository root:
+
+```sh
+sudo pacman -S --needed go git
+cd host
+go build -o stagewand-host ./cmd/stagewand-host
+sudo cp udev/70-stagewand-uinput.rules /etc/udev/rules.d/
+sudo cp modules-load.d/uinput.conf /etc/modules-load.d/stagewand-uinput.conf
+sudo modprobe uinput
+sudo udevadm control --reload
+sudo udevadm trigger --action=add --subsystem-match=misc
+```
+
+Log out of the graphical session and log in again so systemd-logind applies the `uaccess` ACL on `/dev/uinput`. Do not add your user to the `input` group.
+
+Then run:
+
+```sh
+./stagewand-host
+```
+
+The process prints the four-digit pairing code, the LAN address, the session type, and whether uinput is writable. Type `k` and Enter to kick the peer and rotate the code. Ctrl+C quits.
+
+If `/dev/uinput` is missing or not writable, the host still accepts connections and logs commands. Pointer injection stays off until the module is loaded and the seated user can open `/dev/uinput`. Run `./stagewand-host --diagnose` to print the probe.
+
+Optional package from this checkout (needs core/gcc and the `base-devel` group for `makepkg`):
+
+```sh
+sudo pacman -S --needed go git gcc base-devel
+cd host/arch
+makepkg -si
+```
+
+That installs `/usr/bin/stagewand-host`, the udev rule under `/usr/lib/udev/rules.d/`, and a modules-load file so `uinput` loads at boot.
+
+### Install on Debian or Ubuntu
+
+```sh
+sudo apt install golang-go git
+cd host
+go build -o stagewand-host ./cmd/stagewand-host
+sudo cp udev/70-stagewand-uinput.rules /etc/udev/rules.d/
+sudo cp modules-load.d/uinput.conf /etc/modules-load.d/stagewand-uinput.conf
+sudo modprobe uinput
+sudo udevadm control --reload
+sudo udevadm trigger --action=add --subsystem-match=misc
+```
+
+Log out of the graphical session and log in again, then run `./stagewand-host`.
+
+### Session types
+
+| Session | uinput |
+| --- | --- |
+| Hyprland, Sway, niri, river, labwc, Wayfire | Works on Wayland |
+| GNOME or KDE Plasma on Wayland | Works |
+| i3, dwm, Xfce, Cinnamon, GNOME or KDE on X11 | Works |
+| SSH or a tty with no seat | The `uaccess` ACL often does not apply. Run the host on the local graphical session. |
+
+Run `./stagewand-host --selftest` after login to post a short move, click, Esc, and scroll. Use `--dry-run` to skip injection. Use `--serve` for the headless test server with code `0000`.
+
+Chords send Ctrl+Left, Ctrl+Right, and Ctrl+Up. Bind those shortcuts in the compositor if you want space switching. Scroll uses relative wheel units, so distance will not match macOS pixel scrolling.
+
+## Windows host
+
+The same `host` module cross-compiles to Windows and injects input with `SendInput`.
+
+On a Windows machine with Go:
+
+```bat
+cd host
+go build -o stagewand-host.exe .\cmd\stagewand-host
+stagewand-host.exe
+```
+
+From Linux or macOS you can only compile, not run, the Windows binary:
+
+```sh
+cd host
+GOOS=windows GOARCH=amd64 go build -o stagewand-host.exe ./cmd/stagewand-host
+```
+
+Allow the app through Windows Firewall when it binds. The console shows the pairing code and listen address. Type `k` and Enter to kick. `--serve`, `--dry-run`, and `--selftest` match the Linux flags.
+
+Chord mapping on Windows is a desktop analogue, not Mission Control:
+
+| Protocol chord | Windows keys |
+| --- | --- |
+| `spaceLeft` | Win+Ctrl+Left (previous virtual desktop) |
+| `spaceRight` | Win+Ctrl+Right (next virtual desktop) |
+| `missionControl` | Win+Tab (Task View) |
+
+Enable virtual desktops if you want the space chords. Pointer motion is integer pixels. Sub-pixel moves snap to one pixel.
+
+## Android remote
+
+The Android app discovers `_stagewand._tcp`, or you can type `host:port` / a tunnel URL. It authenticates with the four-digit code, sends volume up/down as next/prev, and has square unlock, ARM, trackpad, and the same on-screen keys as iOS.
+
+Open the `android/` folder in Android Studio (JDK 21, Android SDK 35) and run the **app** configuration on a phone. From the command line:
+
+```sh
+cd android
+./gradlew :protocol:test :app:assembleDebug
+```
+
+The debug APK is `android/app/build/outputs/apk/debug/app-debug.apk`. Install it with `adb install -r` that path, then allow nearby devices (or location on Android 12 and older) and notifications if the system asks.
+
+Pairing:
+
+1. Run a host (Mac, Linux, or Windows) on the same LAN.
+2. Draw the square to unlock the Android UI.
+3. Enter the host pairing code in Settings, including leading zeros.
+4. If discovery finds nothing, set **Host address or tunnel URL** to `192.168.1.20:8787` with the real IP and port.
+
+Volume keys are consumed while Stage Wand is in the foreground. A media-playback foreground service tries to keep the process alive and watch music-stream volume changes after you leave the activity. That pocket path is OEM-dependent and untested on a physical phone in this change. Use NEXT/PREV if volume does not arrive.
+
+Android has no Bluetooth-direct transport. Use Wi-Fi, a hotspot, a manual `host:port`, or the existing Cloudflare tunnel URL from a Mac host.
+
+## Wire protocol
+
+`Shared/Protocol.swift` is the source of truth. `Shared/protocol.schema.json` and `Shared/protocol-fixtures.json` are the cross-language copies used by Go and Kotlin tests. Do not add a new `t` value in Swift without updating the fixtures. The fixture check greps `Protocol.swift` and fails if they drift.
+
+First frame must be `auth` within 2 seconds. A valid code displaces the current peer. The server sends WebSocket pings every 3 seconds and drops a peer after 6 seconds without a pong.
+
+## What works here vs what needs a device
+
+Verified in this repository's CI environment:
+
+- Go protocol parser against the golden fixtures
+- Linux host WebSocket behavior (`bun scripts/ws-smoke.ts --spawn-host`): auth window, `badauth`, displace, 200 ordered moves, ping/pong
+- Windows `GOOS=windows` compile of the same host
+- Kotlin protocol, square-unlock, command-queue, and connection-URL tests
+- `./gradlew :app:assembleDebug`
+- Arch Linux `archlinux:latest` with `pacman -S --needed go git gcc base-devel`, `bash host/arch/check.sh`, and `makepkg -f` for `stagewand-host`
+
+Not verified on hardware in this change:
+
+- `/dev/uinput` injection on an Arch desktop (needs the udev rule, a loaded `uinput` module, and a graphical seat)
+- `SendInput` on a Windows desktop, including firewall and virtual-desktop chords
+- Android NSD discovery, volume keys, lock-screen/pocket volume, haptics, and multi-touch trackpad on a phone
+- An iPhone talking to the Linux or Windows host, or Android talking to StageWandMac
+- Bluetooth direct on anything other than the existing Apple pair
 
 ## First connection
 
@@ -77,10 +230,15 @@ swiftc Shared/Protocol.swift scripts/protocol-check.swift -o /tmp/stagewand-prot
 /tmp/stagewand-protocol-check
 swiftc Shared/SquareUnlock.swift scripts/square-unlock-check.swift -o /tmp/stagewand-square-check
 /tmp/stagewand-square-check
+bun scripts/protocol-fixtures-check.ts
 bun scripts/ws-smoke.ts --spawn
+bun scripts/ws-smoke.ts --spawn-host
+(cd host && go test ./... && go build -o stagewand-host ./cmd/stagewand-host && GOOS=windows GOARCH=amd64 go build -o stagewand-host.exe ./cmd/stagewand-host)
+bash host/arch/check.sh
+(cd android && ./gradlew :protocol:test :app:assembleDebug)
 ```
 
-`--spawn` starts a headless server with test code `0000`, verifies delivery order and authentication, then stops it. Normal app launches generate a random pairing code.
+`--spawn` starts the macOS headless server with test code `0000`. `--spawn-host` does the same with the Go host. Both verify delivery order and authentication, then stop. Normal app launches generate a random pairing code.
 
 To exercise the phone transport against a running headless server, compile `Shared/Protocol.swift`, `Shared/ConnectionURL.swift`, `Shared/CommandQueue.swift`, `ios/StageWand/Discovery.swift`, `ios/StageWand/LocalSocket.swift`, `ios/StageWand/Link.swift`, and `scripts/link-check.swift` together with `swiftc -swift-version 6`; run the result with `PORT` set to the test server port (default 8787).
 

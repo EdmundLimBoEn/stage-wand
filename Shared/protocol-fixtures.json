@@ -1,0 +1,30 @@
+{
+  "source": "Shared/Protocol.swift",
+  "commands": [
+    { "t": "auth", "code": "4821" },
+    { "t": "move", "dx": 3.2, "dy": -1 },
+    { "t": "click", "b": "left" },
+    { "t": "click", "b": "right" },
+    { "t": "scroll", "dx": 0, "dy": 40 },
+    { "t": "key", "k": "esc" },
+    { "t": "key", "k": "left" },
+    { "t": "key", "k": "right" },
+    { "t": "chord", "k": "spaceRight" },
+    { "t": "chord", "k": "spaceLeft" },
+    { "t": "chord", "k": "missionControl" }
+  ],
+  "replies": [
+    { "t": "status" },
+    { "t": "bye", "reason": "displaced" },
+    { "t": "bye", "reason": "kicked" },
+    { "t": "bye", "reason": "badauth" }
+  ],
+  "invalidCommands": [
+    "{\"t\":\"move\",\"dx\":1e999,\"dy\":0}",
+    "{\"t\":\"unknown\"}",
+    "{\"t\":\"click\",\"b\":\"middle\"}",
+    "{\"t\":\"key\",\"k\":\"enter\"}",
+    "{\"t\":\"auth\"}",
+    "{\"dx\":1,\"dy\":2}"
+  ]
+}

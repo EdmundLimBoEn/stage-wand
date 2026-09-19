@@ -1,0 +1,51 @@
+# Maintainer: Edmund Lim <me@edmundlim.systems>
+
+pkgname=stagewand-host
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='LAN WebSocket host that injects Stage Wand pointer and key events via uinput'
+arch=('x86_64' 'aarch64')
+url='https://github.com/EdmundLimBoEn/stage-wand'
+license=('LicenseRef-NOASSERTION')
+depends=('glibc')
+makedepends=('go' 'gcc')
+install=stagewand-host.install
+options=('!debug' '!lto')
+source=()
+md5sums=()
+
+_repodir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+
+prepare() {
+  mkdir -p "$srcdir/build"
+  export GOPATH="$srcdir/go"
+  export GOCACHE="$srcdir/cache"
+  cd "$_repodir/host"
+  go mod download -modcacherw
+}
+
+build() {
+  cd "$_repodir/host"
+  export GOPATH="$srcdir/go"
+  export GOCACHE="$srcdir/cache"
+  export CGO_CPPFLAGS="${CPPFLAGS}"
+  export CGO_CFLAGS="${CFLAGS}"
+  export CGO_CXXFLAGS="${CXXFLAGS}"
+  export CGO_LDFLAGS="${LDFLAGS}"
+  GOFLAGS="-buildmode=pie -trimpath -mod=readonly -modcacherw -buildvcs=false" \
+    go build -ldflags "-linkmode=external" -o "$srcdir/build/stagewand-host" ./cmd/stagewand-host
+}
+
+check() {
+  cd "$_repodir/host"
+  export GOPATH="$srcdir/go"
+  export GOCACHE="$srcdir/cache"
+  GOFLAGS="-mod=readonly -modcacherw -buildvcs=false" \
+    go test ./internal/... ./cmd/...
+}
+
+package() {
+  install -Dm755 "$srcdir/build/stagewand-host" "$pkgdir/usr/bin/stagewand-host"
+  install -Dm644 "$_repodir/host/udev/70-stagewand-uinput.rules" "$pkgdir/usr/lib/udev/rules.d/70-stagewand-uinput.rules"
+  install -Dm644 "$_repodir/host/modules-load.d/uinput.conf" "$pkgdir/usr/lib/modules-load.d/stagewand-uinput.conf"
+}
