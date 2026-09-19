@@ -3,7 +3,8 @@ import { connect as tcpConnect } from "node:net";
 import { randomBytes } from "node:crypto";
 
 const args = process.argv.slice(2);
-const spawnServer = args.includes("--spawn");
+const spawnHost = args.includes("--spawn-host");
+const spawnServer = args.includes("--spawn") || spawnHost;
 const explicitURL = args.find((arg) => arg.startsWith("ws://"));
 const sockets: WebSocket[] = [];
 let child: ReturnType<typeof Bun.spawn> | undefined;
@@ -81,13 +82,29 @@ async function withoutPong(url: string) {
     } finally { socket.destroy(); }
 }
 
+async function spawnGoHost(hostDir: string) {
+    const binary = "/tmp/stagewand-host-smoke";
+    const build = Bun.spawn(["go", "build", "-o", binary, "./cmd/stagewand-host"], {
+        cwd: hostDir,
+        stdout: "inherit",
+        stderr: "inherit",
+    });
+    const status = await build.exited;
+    if (status !== 0) throw new Error(`go build failed with ${status}`);
+    return Bun.spawn([binary, "--serve"], { stdout: "pipe", stderr: "inherit" });
+}
+
 try {
     let url = explicitURL ?? "ws://127.0.0.1:8787";
     if (spawnServer) {
-        child = Bun.spawn(["swift", "run", "--package-path", "mac", "StageWandMac", "--serve"], {
-            cwd: new URL("..", import.meta.url).pathname,
-            stdout: "pipe", stderr: "inherit",
-        });
+        const repoRoot = new URL("..", import.meta.url).pathname;
+        child = spawnHost
+            ? await spawnGoHost(`${repoRoot}host`)
+            : Bun.spawn(["swift", "run", "--package-path", "mac", "StageWandMac", "--serve"], {
+                cwd: repoRoot,
+                stdout: "pipe",
+                stderr: "inherit",
+            });
         void (async () => {
             const reader = child!.stdout as ReadableStream<Uint8Array>;
             const decoder = new TextDecoder();
