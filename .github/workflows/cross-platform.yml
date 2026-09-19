@@ -45,6 +45,8 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
       - name: Protocol tests and debug APK
         working-directory: android
         run: ./gradlew --no-daemon :protocol:test :app:assembleDebug
