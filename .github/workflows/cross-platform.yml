@@ -2,7 +2,13 @@ name: Cross-platform
 
 on:
   push:
+    branches:
+      - main
+      - dev
   pull_request:
+    branches:
+      - main
+      - dev
 
 jobs:
   protocol:
@@ -70,6 +76,12 @@ jobs:
           command -v stagewand-host
           stagewand-host --diagnose
           stagewand-host --selftest --dry-run
+      - name: Upload Linux package artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagewand-host-arch-linux-${{ github.ref_name }}-${{ github.sha }}
+          path: /home/builder/stage-wand/host/arch/stagewand-host-*.pkg.tar.zst
 
   android:
     runs-on: ubuntu-latest
