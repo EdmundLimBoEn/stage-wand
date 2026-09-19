@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/EdmundLimBoEn/stage-wand/host/internal/ble"
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/input"
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/lan"
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/mdns"
@@ -81,6 +82,20 @@ func main() {
 		defer advert.Close()
 	}
 
+	bleName := *name
+	if bleName == "" {
+		bleName, _ = os.Hostname()
+	}
+	var bleDev ble.Peripheral = ble.Unavailable(fmt.Errorf("--serve"))
+	if !*serve {
+		bleDev = ble.Start(ble.Hooks{
+			Code:      session.Code,
+			SetPeer:   session.SetPeer,
+			OnCommand: onCommand,
+		}, bleName)
+		defer bleDev.Close()
+	}
+
 	if *serve {
 		waitSignal()
 		srv.Close()
@@ -97,14 +112,14 @@ func main() {
 	if mdnsErr != nil {
 		mdnsNote = "unavailable (" + mdnsErr.Error() + "); use manual host:port"
 	}
-	printUI(session, ip, port, readyNote, mdnsNote)
-	go stdinKick(session, srv, func() { printUI(session, ip, port, readyNote, mdnsNote) })
+	printUI(session, ip, port, readyNote, mdnsNote, bleDev.Note())
+	go stdinKick(session, srv, bleDev, func() { printUI(session, ip, port, readyNote, mdnsNote, bleDev.Note()) })
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	go func() {
 		var last string
 		for range ticker.C {
-			snap := snapshot(session, ip, port, readyNote, mdnsNote)
+			snap := snapshot(session, ip, port, readyNote, mdnsNote, bleDev.Note())
 			if snap != last {
 				last = snap
 				fmt.Print(snap)
@@ -179,23 +194,24 @@ func waitSignal() {
 	<-ch
 }
 
-func stdinKick(session *server.Session, srv *server.Server, redraw func()) {
+func stdinKick(session *server.Session, srv *server.Server, bleDev ble.Peripheral, redraw func()) {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		line := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		if line == "k" || line == "kick" {
 			session.SetCode(randomCode())
 			srv.Kick()
+			bleDev.Kick()
 			redraw()
 		}
 	}
 }
 
-func printUI(session *server.Session, ip string, port int, inputNote, mdnsNote string) {
-	fmt.Print(snapshot(session, ip, port, inputNote, mdnsNote))
+func printUI(session *server.Session, ip string, port int, inputNote, mdnsNote, bleNote string) {
+	fmt.Print(snapshot(session, ip, port, inputNote, mdnsNote, bleNote))
 }
 
-func snapshot(session *server.Session, ip string, port int, inputNote, mdnsNote string) string {
+func snapshot(session *server.Session, ip string, port int, inputNote, mdnsNote, bleNote string) string {
 	addr := fmt.Sprintf("port %d", port)
 	if ip != "" {
 		addr = fmt.Sprintf("%s:%d", ip, port)
@@ -204,6 +220,6 @@ func snapshot(session *server.Session, ip string, port int, inputNote, mdnsNote 
 	if peer == "" {
 		peer = "waiting"
 	}
-	return fmt.Sprintf("\nStage Wand host\nPairing code:  %s\nListen:        %s\nInput:         %s\nPeer:          %s\nmDNS:          %s\nType k then Enter to kick. Ctrl+C to quit.\n",
-		session.Code(), addr, inputNote, peer, mdnsNote)
+	return fmt.Sprintf("\nStage Wand host\nPairing code:  %s\nListen:        %s\nInput:         %s\nPeer:          %s\nmDNS:          %s\nBluetooth:     %s\nType k then Enter to kick. Ctrl+C to quit.\n",
+		session.Code(), addr, inputNote, peer, mdnsNote, bleNote)
 }

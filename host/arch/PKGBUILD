@@ -3,11 +3,12 @@
 pkgname=stagewand-host
 pkgver=0.1.0
 pkgrel=1
-pkgdesc='LAN WebSocket host that injects Stage Wand pointer and key events via uinput'
+pkgdesc='LAN WebSocket and Bluetooth LE host that injects Stage Wand pointer and key events via uinput'
 arch=('x86_64' 'aarch64')
 url='https://github.com/EdmundLimBoEn/stage-wand'
 license=('LicenseRef-NOASSERTION')
 depends=('glibc')
+optdepends=('bluez: Bluetooth LE GATT peripheral')
 makedepends=('go' 'gcc')
 install=stagewand-host.install
 options=('!debug' '!lto')

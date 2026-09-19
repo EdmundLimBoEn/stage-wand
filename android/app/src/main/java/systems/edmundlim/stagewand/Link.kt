@@ -11,14 +11,16 @@ import systems.edmundlim.stagewand.protocol.Command
 import systems.edmundlim.stagewand.protocol.CommandQueue
 import systems.edmundlim.stagewand.protocol.ConnectionURL
 import systems.edmundlim.stagewand.protocol.Reply
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class Link(
-    private val discovery: Discovery
+    private val discovery: Discovery,
+    private val bluetooth: BluetoothClient
 ) {
     enum class State {
-        Searching, Connecting, EnterCode, Authed, Disconnected, LocalNetworkDenied
+        Searching, Connecting, EnterCode, Authed, Disconnected, LocalNetworkDenied, BluetoothDenied
     }
 
     var state: State = State.Searching
@@ -35,6 +37,7 @@ class Link(
         .retryOnConnectionFailure(false)
         .build()
     private var socket: WebSocket? = null
+    private var live = false
     private var settings = Settings()
     private val buffered = ArrayDeque<Command>()
     private val outgoing = CommandQueue()
@@ -46,7 +49,7 @@ class Link(
             if (state == State.Searching || state == State.Disconnected) connect()
         }
         discovery.onDenied = {
-            if (settings.manualHost.isEmpty() && state != State.Authed) {
+            if (settings.manualHost.isEmpty() && settings.transport != "bluetooth" && state != State.Authed) {
                 resetConnection()
                 state = State.LocalNetworkDenied
                 notifyChanged()
@@ -56,13 +59,20 @@ class Link(
 
     fun update(settings: Settings) {
         val reconnect = settings.pairingCode != this.settings.pairingCode ||
-            settings.manualHost.trim() != this.settings.manualHost.trim()
+            settings.manualHost.trim() != this.settings.manualHost.trim() ||
+            settings.transport != this.settings.transport
         this.settings = settings
         if (!reconnect) return
         resetConnection()
         state = if (settings.pairingCode.isEmpty()) State.EnterCode else State.Searching
         notifyChanged()
         if (settings.pairingCode.isNotEmpty()) connect()
+    }
+
+    fun markBluetoothDenied() {
+        resetConnection()
+        state = State.BluetoothDenied
+        notifyChanged()
     }
 
     fun start() {
@@ -90,7 +100,7 @@ class Link(
     }
 
     private fun connect() {
-        if (socket != null) return
+        if (live) return
         if (settings.pairingCode.isEmpty()) {
             state = State.EnterCode
             notifyChanged()
@@ -109,6 +119,10 @@ class Link(
             open(url)
             return
         }
+        if (settings.transport == "bluetooth") {
+            openBluetooth()
+            return
+        }
         discovery.start()
         val result = discovery.results.firstOrNull()
         if (result == null) {
@@ -121,7 +135,43 @@ class Link(
         open("ws://${formatHost(result.host)}:${result.port}/")
     }
 
+    private fun openBluetooth() {
+        live = true
+        route = "Bluetooth"
+        hostName = null
+        bluetooth.onName = {
+            hostName = it
+            notifyChanged()
+        }
+        val id = generation.incrementAndGet()
+        state = State.Connecting
+        notifyChanged()
+        bluetooth.connect(
+            onReady = {
+                main.post {
+                    if (generation.get() != id) return@post
+                    enqueue(Command.Auth(settings.pairingCode))
+                }
+            },
+            onData = { bytes ->
+                main.post {
+                    if (generation.get() != id) return@post
+                    handleReply(Reply.decode(String(bytes, StandardCharsets.UTF_8)))
+                }
+            },
+            onFail = {
+                main.post {
+                    if (generation.get() == id) disconnected()
+                }
+            }
+        )
+        main.postDelayed({
+            if (generation.get() == id && state != State.Authed) disconnected()
+        }, 10_000)
+    }
+
     private fun open(url: String) {
+        live = true
         val id = generation.incrementAndGet()
         state = State.Connecting
         notifyChanged()
@@ -136,22 +186,7 @@ class Link(
             override fun onMessage(webSocket: WebSocket, text: String) {
                 main.post {
                     if (generation.get() != id) return@post
-                    when (val reply = Reply.decode(text)) {
-                        is Reply.Status -> {
-                            state = State.Authed
-                            val pending = buffered.toList()
-                            buffered.clear()
-                            pending.forEach(::enqueue)
-                            notifyChanged()
-                        }
-                        is Reply.Bye -> {
-                            resetConnection()
-                            state = if (reply.reason == "badauth") State.EnterCode else State.Disconnected
-                            notifyChanged()
-                            if (state == State.Disconnected) scheduleReconnect()
-                        }
-                        null -> {}
-                    }
+                    handleReply(Reply.decode(text))
                 }
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -166,18 +201,41 @@ class Link(
         }, 10_000)
     }
 
+    private fun handleReply(reply: Reply?) {
+        when (reply) {
+            is Reply.Status -> {
+                state = State.Authed
+                val pending = buffered.toList()
+                buffered.clear()
+                pending.forEach(::enqueue)
+                notifyChanged()
+            }
+            is Reply.Bye -> {
+                resetConnection()
+                state = if (reply.reason == "badauth") State.EnterCode else State.Disconnected
+                notifyChanged()
+                if (state == State.Disconnected) scheduleReconnect()
+            }
+            null -> {}
+        }
+    }
+
     private fun enqueue(command: Command) {
         outgoing.append(command)
         flush()
     }
 
     private fun flush() {
-        val webSocket = socket ?: return
         if (sending) return
         sending = true
         while (!outgoing.isEmpty) {
             val command = outgoing.popFirst() ?: break
-            if (!webSocket.send(command.encode())) {
+            val sent = if (socket != null) {
+                socket?.send(command.encode()) == true
+            } else {
+                bluetooth.send(command.encode().toByteArray(StandardCharsets.UTF_8))
+            }
+            if (!sent) {
                 sending = false
                 disconnected()
                 return
@@ -202,8 +260,10 @@ class Link(
 
     private fun resetConnection() {
         generation.incrementAndGet()
+        live = false
         socket?.cancel()
         socket = null
+        bluetooth.cancel()
         sending = false
         outgoing.removeAll()
     }

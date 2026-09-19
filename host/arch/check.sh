@@ -19,6 +19,7 @@ grep -qx 'uinput' "$mod" || fail "modules-load.d must contain uinput"
 
 readme="$root/README.md"
 grep -q 'pacman -S --needed go git' "$readme" || fail "README must show Arch pacman install"
+grep -q 'pacman -S --needed bluez bluez-utils' "$readme" || fail "README must show Arch bluez install"
 if grep -q 'usermod -aG input' "$readme"; then
   fail "README must not tell users to join the input group"
 fi

@@ -43,4 +43,24 @@ if (!fixtures.invalidCommands.some((frame: string) => frame.includes("1e999"))) 
     fail("fixtures must keep the non-finite move case from protocol-check.swift");
 }
 
-console.log("PASS: Protocol.swift t values, schema variants, and golden fixtures match");
+const bluetoothSwift = readFileSync(join(root, "Shared/Bluetooth.swift"), "utf8");
+const goUuids = readFileSync(join(root, "host/internal/ble/uuids.go"), "utf8");
+const kotlinUuids = readFileSync(
+    join(root, "android/protocol/src/main/kotlin/systems/edmundlim/stagewand/protocol/Bluetooth.kt"),
+    "utf8",
+);
+for (const uuid of [
+    "5A3E0001-8B6C-4B1E-9F8D-2C7A1D4E6F01",
+    "5A3E0002-8B6C-4B1E-9F8D-2C7A1D4E6F01",
+    "5A3E0003-8B6C-4B1E-9F8D-2C7A1D4E6F01",
+]) {
+    for (const [name, text] of [
+        ["Shared/Bluetooth.swift", bluetoothSwift],
+        ["host/internal/ble/uuids.go", goUuids],
+        ["Bluetooth.kt", kotlinUuids],
+    ] as const) {
+        if (!text.toUpperCase().includes(uuid)) fail(`${name} missing ${uuid}`);
+    }
+}
+
+console.log("PASS: Protocol.swift t values, schema variants, golden fixtures, and BLE UUIDs match");

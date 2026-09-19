@@ -105,6 +105,7 @@ private fun StatusPill(link: Link) {
         Link.State.Authed -> "${link.route} · ${link.hostName ?: "host"}"
         Link.State.Disconnected -> "Disconnected · tap volume or reopen to reconnect"
         Link.State.LocalNetworkDenied -> "Local network denied. Allow nearby devices, or enter a host:port."
+        Link.State.BluetoothDenied -> "Bluetooth denied. Allow Bluetooth, or switch to Wi-Fi nearby."
     }
     val color = if (link.state == Link.State.Authed) Color(0xFF3EB489) else Color(0xFFFFA000)
     Row(
@@ -147,6 +148,29 @@ private fun SettingsPane(settings: Settings, onChange: (Settings) -> Unit, onDon
             label = { Text("Pairing code") },
             modifier = Modifier.fillMaxWidth()
         )
+        Text("Connection", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            if (settings.transport == "bluetooth") {
+                Button(onClick = { onChange(settings.copy(transport = "bluetooth")) }, modifier = Modifier.weight(1f)) {
+                    Text("Bluetooth")
+                }
+                OutlinedButton(onClick = { onChange(settings.copy(transport = "wifi")) }, modifier = Modifier.weight(1f)) {
+                    Text("Wi-Fi")
+                }
+            } else {
+                OutlinedButton(onClick = { onChange(settings.copy(transport = "bluetooth")) }, modifier = Modifier.weight(1f)) {
+                    Text("Bluetooth")
+                }
+                Button(onClick = { onChange(settings.copy(transport = "wifi")) }, modifier = Modifier.weight(1f)) {
+                    Text("Wi-Fi")
+                }
+            }
+        }
+        Text(
+            "Bluetooth direct needs no Wi-Fi. Wi-Fi nearby uses _stagewand._tcp on the LAN. A host address or tunnel URL overrides both.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         OutlinedTextField(
             value = settings.manualHost,
             onValueChange = { onChange(settings.copy(manualHost = it)) },
@@ -162,7 +186,7 @@ private fun SettingsPane(settings: Settings, onChange: (Settings) -> Unit, onDon
             )
         }
         Text(
-            "Leave the address empty to discover _stagewand._tcp on the LAN. Bluetooth direct exists only on the Apple path.",
+            "Leave the address empty to use Bluetooth direct or LAN discovery.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
