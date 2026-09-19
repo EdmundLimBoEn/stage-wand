@@ -22,6 +22,13 @@ Physical setup and acceptance checks for Stage Wand. Start with [README.md](READ
 
 - [x] Commit and push to https://github.com/EdmundLimBoEn/stage-wand.
 
+- [ ] Linux host: load `uinput`, install `host/udev/99-stagewand-uinput.rules`, log in again, run `./stagewand-host`, and confirm the pairing code and LAN address.
+- [ ] Linux host: pair an iPhone or Android remote, then verify next/prev, pointer, click, scroll, and Ctrl+arrow chords in the frontmost app.
+- [ ] Windows host: run `stagewand-host.exe`, allow the firewall, pair a remote, and verify `SendInput` next/prev, pointer, and Win+Ctrl+Left/Right plus Win+Tab.
+- [ ] Android: install the debug APK, allow nearby devices or enter a manual `host:port`, draw the square, pair with the four-digit code, and confirm volume up/down while the app is in the foreground.
+- [ ] Android: record whether volume still works after locking the screen or leaving the app. Treat failure as expected until proven on that OEM.
+- [ ] Confirm Android does not offer Bluetooth direct, and that Wi-Fi, hotspot, manual host, or a Mac tunnel URL is the route you used.
+
 - [ ] Confirm the Mac pairing window is visible on launch/reopen.
 - [ ] Confirm taps, incomplete squares, diagonal swipes, and rapid scribbles do not unlock volume mode; a deliberate full square does.
 - [ ] Confirm Lock for pocket and leaving the app relock all touch controls while hardware volume remains available.
