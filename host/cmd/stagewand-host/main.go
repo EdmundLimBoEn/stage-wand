@@ -89,8 +89,7 @@ func main() {
 	var bleDev ble.Peripheral = ble.Unavailable(fmt.Errorf("--serve"))
 	if !*serve {
 		bleDev = ble.Start(ble.Hooks{
-			Code:      session.Code,
-			SetPeer:   session.SetPeer,
+			Control:   session,
 			OnCommand: onCommand,
 		}, bleName)
 		defer bleDev.Close()
@@ -150,7 +149,10 @@ func runSelfTest(dryRun bool) int {
 	fmt.Print(probe.Report())
 	if dryRun {
 		injector := input.Logging{}
-		applySelfTest(injector)
+		if err := applySelfTest(injector); err != nil {
+			fmt.Printf("SELFTEST FAIL: %v\n", err)
+			return 1
+		}
 		fmt.Println("SELFTEST PASS: dry-run posted pointer movement, left click, Esc, and scroll.")
 		return 0
 	}
@@ -166,18 +168,29 @@ func runSelfTest(dryRun bool) int {
 		return 1
 	}
 	fmt.Printf("SELFTEST injector: %s\n", detail)
-	applySelfTest(injector)
+	if err := applySelfTest(injector); err != nil {
+		fmt.Printf("SELFTEST FAIL: %v\n", err)
+		return 1
+	}
 	fmt.Println("SELFTEST PASS: Posted pointer movement, left click, Esc, and scroll.")
 	return 0
 }
 
-func applySelfTest(injector input.Injector) {
-	_ = injector.Apply(protocol.Move{Dx: 100, Dy: 0})
-	time.Sleep(100 * time.Millisecond)
-	_ = injector.Apply(protocol.Move{Dx: -100, Dy: 0})
-	_ = injector.Apply(protocol.Click{Button: protocol.ButtonLeft})
-	_ = injector.Apply(protocol.KeyPress{Key: protocol.KeyEsc})
-	_ = injector.Apply(protocol.Scroll{Dx: 0, Dy: 3})
+func applySelfTest(injector input.Injector) error {
+	commands := []protocol.Command{
+		protocol.Move{Dx: 100, Dy: 0}, protocol.Move{Dx: -100, Dy: 0},
+		protocol.Click{Button: protocol.ButtonLeft}, protocol.KeyPress{Key: protocol.KeyEsc},
+		protocol.Scroll{Dx: 0, Dy: 3},
+	}
+	for i, command := range commands {
+		if err := injector.Apply(command); err != nil {
+			return fmt.Errorf("%T: %w", command, err)
+		}
+		if i == 0 {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	return nil
 }
 
 func randomCode() string {

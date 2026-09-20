@@ -19,8 +19,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import systems.edmundlim.stagewand.protocol.Button
-import systems.edmundlim.stagewand.protocol.ChordName
+import systems.edmundlim.stagewand.protocol.TouchPoint
+import systems.edmundlim.stagewand.protocol.TrackpadGesture
 import systems.edmundlim.stagewand.protocol.Command
 
 @Composable
@@ -57,23 +57,26 @@ fun Trackpad(
         modifier
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(24.dp))
             .pointerInput(armed, sensitivity) {
+                val gesture = TrackpadGesture(viewConfiguration.touchSlop)
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Main)
                         if (!armed) continue
+                        gesture.update(event.changes.map {
+                            TouchPoint(it.id.value, it.position.x, it.position.y, it.pressed)
+                        }, event.changes.first().uptimeMillis)?.let { command ->
+                            flush(moveAcc, scrollAcc, onCommand)
+                            moveAcc = Offset.Zero
+                            scrollAcc = Offset.Zero
+                            onCommand(command)
+                        }
                         val pressed = event.changes.filter { it.pressed }
                         when (pressed.size) {
                             0 -> {
-                                val ended = event.changes
                                 dragging = false
-                                val slop = 18f
-                                val travel = ended.fold(0f) { acc, change ->
-                                    acc + (change.position - change.previousPosition).getDistance()
-                                }
-                                if (ended.size == 1 && travel < slop) onCommand(Command.Click(Button.Left))
-                                if (ended.size >= 2 && travel < slop) onCommand(Command.Click(Button.Right))
                             }
                             1 -> {
+                                if (gesture.pointerCount != 1) continue
                                 dragging = true
                                 val change = pressed[0]
                                 val delta = change.position - change.previousPosition
@@ -82,6 +85,7 @@ fun Trackpad(
                                 change.consume()
                             }
                             2 -> {
+                                if (gesture.pointerCount != 2) continue
                                 dragging = true
                                 val delta = pressed.fold(Offset.Zero) { acc, change ->
                                     acc + (change.position - change.previousPosition)
@@ -92,16 +96,6 @@ fun Trackpad(
                             }
                             else -> {
                                 dragging = false
-                                val delta = pressed.fold(Offset.Zero) { acc, change ->
-                                    acc + (change.position - change.previousPosition)
-                                }
-                                val chord = when {
-                                    delta.x < -40 -> ChordName.SpaceLeft
-                                    delta.x > 40 -> ChordName.SpaceRight
-                                    delta.y < -40 -> ChordName.MissionControl
-                                    else -> null
-                                }
-                                if (chord != null) onCommand(Command.Chord(chord))
                                 pressed.forEach { it.consume() }
                             }
                         }
@@ -120,14 +114,7 @@ fun Trackpad(
 }
 
 private fun flush(move: Offset, scroll: Offset, onCommand: (Command) -> Unit) {
-    var remaining = move
-    while (remaining != Offset.Zero) {
-        val dx = remaining.x.coerceIn(-400f, 400f)
-        val dy = remaining.y.coerceIn(-400f, 400f)
-        if (dx == 0f && dy == 0f) break
-        onCommand(Command.Move(dx.toDouble(), dy.toDouble()))
-        remaining = Offset(remaining.x - dx, remaining.y - dy)
-    }
+    if (move != Offset.Zero) onCommand(Command.Move(move.x.toDouble(), move.y.toDouble()))
     if (scroll != Offset.Zero) {
         onCommand(Command.Scroll(scroll.x.toDouble(), scroll.y.toDouble()))
     }

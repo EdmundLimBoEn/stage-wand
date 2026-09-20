@@ -62,10 +62,12 @@ func startLinux(hooks Hooks, localName string) (*linuxPeripheral, error) {
 		}
 	}
 	p := &linuxPeripheral{
-		session: NewSession(hooks),
+
 		bus:     bus,
 		adapter: adapter,
 	}
+	hooks.OnActions = p.apply
+	p.session = NewSession(hooks)
 	if err := p.exportGATT(); err != nil {
 		return nil, err
 	}
@@ -88,7 +90,7 @@ func (p *linuxPeripheral) Note() string {
 }
 
 func (p *linuxPeripheral) Kick() {
-	p.apply(p.session.Kick())
+	p.session.Kick()
 }
 
 func (p *linuxPeripheral) Close() error {
@@ -163,7 +165,7 @@ func (p *linuxPeripheral) exportGATT() error {
 		return err
 	}
 	p.reply = replyProps
-	command := &gattChar{role: "command", session: p.session, props: commandProps, apply: p.apply}
+	command := &gattChar{role: "command", session: p.session, props: commandProps}
 	reply := &gattChar{role: "reply", props: replyProps}
 	if err := p.bus.Export(command, commandPath, "org.bluez.GattCharacteristic1"); err != nil {
 		return err
@@ -191,7 +193,6 @@ func (p *linuxPeripheral) apply(actions []Action) {
 			_ = p.reply.Set("org.bluez.GattCharacteristic1", "Value", dbus.MakeVariant(action.Notify))
 		}
 		if action.Drop != "" {
-			p.session.Drop(action.Drop)
 			_ = p.bus.Object("org.bluez", dbus.ObjectPath(action.Drop)).Call("org.bluez.Device1.Disconnect", 0)
 		}
 	}
@@ -267,7 +268,6 @@ type gattChar struct {
 	role    string
 	session *Session
 	props   *prop.Properties
-	apply   func([]Action)
 }
 
 func (c *gattChar) ReadValue(options map[string]dbus.Variant) ([]byte, *dbus.Error) {
@@ -283,7 +283,7 @@ func (c *gattChar) WriteValue(value []byte, options map[string]dbus.Variant) *db
 	if c.role != "command" || c.session == nil {
 		return dbus.MakeFailedError(fmt.Errorf("not writable"))
 	}
-	c.apply(c.session.Handle(clientFromOptions(options), value))
+	c.session.Handle(clientFromOptions(options), value)
 	return nil
 }
 

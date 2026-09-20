@@ -14,14 +14,14 @@ class Discovery(context: Context) {
     var results: List<HostService> = emptyList()
         private set
 
-    private val nsd = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val nsd = context.applicationContext.getSystemService(Context.NSD_SERVICE) as NsdManager
     private val main = Handler(Looper.getMainLooper())
     private var started = false
     private val found = LinkedHashMap<String, NsdServiceInfo>()
 
     private val listener = object : NsdManager.DiscoveryListener {
         override fun onStartDiscoveryFailed(serviceType: String?, errorCode: Int) {
-            main.post { onDenied?.invoke() }
+            main.post { if (started) onDenied?.invoke() }
         }
         override fun onStopDiscoveryFailed(serviceType: String?, errorCode: Int) {}
         override fun onDiscoveryStarted(serviceType: String?) {}
@@ -31,6 +31,7 @@ class Discovery(context: Context) {
                 override fun onResolveFailed(serviceInfo: NsdServiceInfo?, errorCode: Int) {}
                 override fun onServiceResolved(resolved: NsdServiceInfo) {
                     main.post {
+                        if (!started) return@post
                         found[resolved.serviceName] = resolved
                         publish()
                     }
@@ -39,6 +40,7 @@ class Discovery(context: Context) {
         }
         override fun onServiceLost(serviceInfo: NsdServiceInfo) {
             main.post {
+                if (!started) return@post
                 found.remove(serviceInfo.serviceName)
                 publish()
             }

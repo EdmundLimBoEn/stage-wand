@@ -19,6 +19,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
 import systems.edmundlim.stagewand.protocol.BluetoothProtocol
+import systems.edmundlim.stagewand.protocol.Command
+import systems.edmundlim.stagewand.protocol.CommandWriter
 import java.util.UUID
 
 class BluetoothClient(context: Context) {
@@ -37,7 +39,13 @@ class BluetoothClient(context: Context) {
     private var gatt: BluetoothGatt? = null
     private var command: BluetoothGattCharacteristic? = null
     private var ready = false
-    private val outbound = ArrayDeque<ByteArray>()
+    private val outbound = CommandWriter { command ->
+        val connection = gatt
+        val characteristic = this.command
+        ready && connection != null && characteristic != null &&
+            writeCharacteristic(connection, characteristic, command.encode().toByteArray(Charsets.UTF_8))
+    }
+    private val retryWrite = Runnable { flush() }
     private var onReady: (() -> Unit)? = null
     private var onData: ((ByteArray) -> Unit)? = null
     private var onFail: (() -> Unit)? = null
@@ -46,6 +54,7 @@ class BluetoothClient(context: Context) {
         get() = (app.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
 
     fun connect(onReady: () -> Unit, onData: (ByteArray) -> Unit, onFail: () -> Unit) {
+        cancel()
         generation += 1
         this.onReady = onReady
         this.onData = onData
@@ -53,6 +62,7 @@ class BluetoothClient(context: Context) {
         wanted = true
         ready = false
         outbound.clear()
+        main.removeCallbacks(retryWrite)
         val radio = adapter
         if (radio == null || !radio.isEnabled) {
             fail()
@@ -61,9 +71,9 @@ class BluetoothClient(context: Context) {
         scan()
     }
 
-    fun send(data: ByteArray): Boolean {
+    fun send(command: Command): Boolean {
         if (!ready) return false
-        outbound.addLast(data)
+        if (!outbound.enqueue(command)) return false
         flush()
         return true
     }
@@ -73,6 +83,7 @@ class BluetoothClient(context: Context) {
         ready = false
         generation += 1
         outbound.clear()
+        main.removeCallbacks(retryWrite)
         stopScan()
         command = null
         gatt?.disconnect()
@@ -219,6 +230,7 @@ class BluetoothClient(context: Context) {
                     fail()
                     return@post
                 }
+                outbound.completed()
                 flush()
             }
         }
@@ -231,19 +243,11 @@ class BluetoothClient(context: Context) {
         flush()
     }
 
-    @SuppressLint("MissingPermission")
     private fun flush() {
-        val gatt = gatt ?: return
-        val characteristic = command ?: return
         if (!ready) return
-        while (true) {
-            val data = outbound.removeFirstOrNull() ?: return
-            if (!writeCharacteristic(gatt, characteristic, data)) {
-                outbound.addFirst(data)
-                main.postDelayed({ flush() }, 20)
-                return
-            }
-        }
+        main.removeCallbacks(retryWrite)
+        outbound.flush()
+        if (outbound.needsRetry) main.postDelayed(retryWrite, 20)
     }
 
     @SuppressLint("MissingPermission")
@@ -296,6 +300,7 @@ class BluetoothClient(context: Context) {
         wanted = false
         ready = false
         outbound.clear()
+        main.removeCallbacks(retryWrite)
         stopScan()
         command = null
         generation += 1

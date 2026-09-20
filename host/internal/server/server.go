@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EdmundLimBoEn/stage-wand/host/internal/control"
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/protocol"
 	"github.com/gorilla/websocket"
 )
@@ -31,56 +32,9 @@ func DefaultConfig() Config {
 	}
 }
 
-type Session struct {
-	mu   sync.Mutex
-	code string
-	peer string
-	port int
-}
+type Session = control.Session
 
-func NewSession(code string) *Session {
-	return &Session{code: code}
-}
-
-func (s *Session) Code() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.code
-}
-
-func (s *Session) SetCode(code string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.code = code
-}
-
-func (s *Session) Peer() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.peer
-}
-
-func (s *Session) Port() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.port
-}
-
-func (s *Session) SetPeer(peer string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.peer = peer
-}
-
-func (s *Session) setPeer(peer string) {
-	s.SetPeer(peer)
-}
-
-func (s *Session) setPort(port int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.port = port
-}
+func NewSession(code string) *Session { return control.NewSession(code) }
 
 type Server struct {
 	cfg       Config
@@ -89,7 +43,6 @@ type Server struct {
 	upgrader  websocket.Upgrader
 	mu        sync.Mutex
 	peers     map[*peer]struct{}
-	active    *peer
 	http      *http.Server
 	listener  net.Listener
 	moves     int
@@ -100,6 +53,7 @@ type peer struct {
 	remote   string
 	mu       sync.Mutex
 	authed   bool
+	owner    *control.Owner
 	lastPong time.Time
 	closed   chan struct{}
 	once     sync.Once
@@ -147,7 +101,7 @@ func (s *Server) Start() (int, error) {
 		}
 		actual := ln.Addr().(*net.TCPAddr).Port
 		s.listener = ln
-		s.session.setPort(actual)
+		s.session.SetPort(actual)
 		mux := http.NewServeMux()
 		mux.HandleFunc("/", s.handle)
 		s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
@@ -182,10 +136,13 @@ func (s *Server) Close() error {
 
 func (s *Server) Kick() {
 	s.mu.Lock()
-	active := s.active
+	peers := make([]*peer, 0, len(s.peers))
+	for p := range s.peers {
+		peers = append(peers, p)
+	}
 	s.mu.Unlock()
-	if active != nil {
-		s.closePeer(active, protocol.ReasonKicked)
+	for _, p := range peers {
+		s.closePeer(p, protocol.ReasonKicked)
 	}
 }
 
@@ -204,6 +161,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		lastPong: time.Now(),
 		closed:   make(chan struct{}),
 	}
+	p.owner = &control.Owner{Name: p.remote, Revoke: func(reason string) { s.closePeer(p, reason) }}
 	conn.SetPongHandler(func(string) error {
 		p.mu.Lock()
 		p.lastPong = time.Now()
@@ -217,6 +175,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) read(p *peer) {
+	defer s.session.Release(p.owner)
 	defer s.closePeer(p, "")
 	timer := time.AfterFunc(s.cfg.AuthWait, func() {
 		p.mu.Lock()
@@ -244,17 +203,17 @@ func (s *Server) read(p *peer) {
 			if !ok {
 				return
 			}
-			if auth.Code != s.session.Code() {
+			ok, revoke := s.session.Claim(auth.Code, p.owner)
+			if !ok {
 				s.closePeer(p, protocol.ReasonBadAuth)
 				return
 			}
-			s.displace(p)
 			p.mu.Lock()
 			p.authed = true
 			p.lastPong = time.Now()
 			p.mu.Unlock()
 			timer.Stop()
-			s.session.setPeer(p.remote)
+			revoke()
 			if err := p.write(protocol.Status{}); err != nil {
 				return
 			}
@@ -262,12 +221,6 @@ func (s *Server) read(p *peer) {
 			continue
 		}
 		if err != nil {
-			continue
-		}
-		s.mu.Lock()
-		active := s.active == p
-		s.mu.Unlock()
-		if !active {
 			continue
 		}
 		switch v := command.(type) {
@@ -285,11 +238,11 @@ func (s *Server) read(p *peer) {
 				fmt.Printf("MOVES %d\n", count)
 				_ = os.Stdout.Sync()
 			}
-			s.onCommand(v)
+			s.session.Dispatch(p.owner, func() { s.onCommand(v) })
 		case protocol.Scroll:
-			s.onCommand(v)
+			s.session.Dispatch(p.owner, func() { s.onCommand(v) })
 		default:
-			s.onCommand(command)
+			s.session.Dispatch(p.owner, func() { s.onCommand(command) })
 		}
 	}
 }
@@ -321,17 +274,6 @@ func (s *Server) heartbeat(p *peer) {
 	}
 }
 
-func (s *Server) displace(p *peer) {
-	s.mu.Lock()
-	old := s.active
-	s.active = p
-	s.moves = 0
-	s.mu.Unlock()
-	if old != nil && old != p {
-		s.closePeer(old, protocol.ReasonDisplaced)
-	}
-}
-
 func (s *Server) closePeer(p *peer, reason string) {
 	p.once.Do(func() {
 		if reason != "" {
@@ -345,11 +287,8 @@ func (s *Server) closePeer(p *peer, reason string) {
 		close(p.closed)
 		s.mu.Lock()
 		delete(s.peers, p)
-		if s.active == p {
-			s.active = nil
-			s.session.setPeer("")
-		}
 		s.mu.Unlock()
+		s.session.Release(p.owner)
 	})
 }
 

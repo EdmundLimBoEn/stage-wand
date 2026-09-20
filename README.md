@@ -171,9 +171,10 @@ Verified in this repository's CI environment:
 
 - Go protocol parser against the golden fixtures, including BLE UUID lockstep with `Shared/Bluetooth.swift`
 - Linux host WebSocket behavior (`bun scripts/ws-smoke.ts --spawn-host`): auth window, `badauth`, displace, 200 ordered moves, ping/pong
-- Linux host BLE session policy without a radio (`go test ./internal/ble`): auth, `badauth`, displace, kick, move range
-- Windows `GOOS=windows` compile of the same host, including the WinRT GATT adapter
-- Kotlin protocol, square-unlock, command-queue, and connection-URL tests
+- Linux host BLE session policy without a radio (`go test ./internal/ble`): auth, `badauth`, displace, kick, move range, and serialized reconnect cleanup
+- Shared Bluetooth/LAN control ownership and handover, including race-detector checks and stale-owner rejection
+- Windows host tests on a Windows runner, including the native `INPUT` structure layout, plus `GOOS=windows` compilation of the WinRT GATT adapter
+- Kotlin protocol, square-unlock, command-queue, connection-URL, tap/drag gesture, and Bluetooth backpressure tests
 - `./gradlew :app:assembleDebug`
 - Arch Linux `archlinux:latest` with `pacman -S --needed go git gcc base-devel`, `bash host/arch/check.sh`, and `makepkg -f` for `stagewand-host`
 

@@ -3,7 +3,9 @@ package ble
 import (
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/EdmundLimBoEn/stage-wand/host/internal/control"
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/protocol"
 )
 
@@ -23,8 +25,7 @@ func TestAuthStatusAndCommands(t *testing.T) {
 	var mu sync.Mutex
 	var got []protocol.Command
 	session := NewSession(Hooks{
-		Code:    func() string { return "0000" },
-		SetPeer: func(string) {},
+		Control: control.NewSession("0000"),
 		OnCommand: func(command protocol.Command) {
 			mu.Lock()
 			got = append(got, command)
@@ -59,7 +60,7 @@ func TestAuthStatusAndCommands(t *testing.T) {
 }
 
 func TestBadAuthBroadcastWhenIdle(t *testing.T) {
-	session := NewSession(Hooks{Code: func() string { return "0000" }})
+	session := NewSession(Hooks{Control: control.NewSession("0000")})
 	actions := session.Handle("intruder", []byte(`{"t":"auth","code":"9999"}`))
 	if len(actions) != 1 || !actions[0].Broadcast || string(actions[0].Notify) != `{"t":"bye","reason":"badauth"}` {
 		t.Fatalf("%#v", actions)
@@ -67,7 +68,7 @@ func TestBadAuthBroadcastWhenIdle(t *testing.T) {
 }
 
 func TestBadAuthDropsSecondCentral(t *testing.T) {
-	session := NewSession(Hooks{Code: func() string { return "0000" }})
+	session := NewSession(Hooks{Control: control.NewSession("0000")})
 	session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
 	actions := session.Handle("other", []byte(`{"t":"auth","code":"1111"}`))
 	if len(actions) != 1 || actions[0].Drop != "other" || actions[0].Notify != nil {
@@ -79,7 +80,7 @@ func TestBadAuthDropsSecondCentral(t *testing.T) {
 }
 
 func TestDisplaceDropsPrevious(t *testing.T) {
-	session := NewSession(Hooks{Code: func() string { return "0000" }})
+	session := NewSession(Hooks{Control: control.NewSession("0000")})
 	session.Handle("first", []byte(`{"t":"auth","code":"0000"}`))
 	actions := session.Handle("second", []byte(`{"t":"auth","code":"0000"}`))
 	if len(actions) != 2 {
@@ -97,21 +98,20 @@ func TestDisplaceDropsPrevious(t *testing.T) {
 }
 
 func TestKickAndDrop(t *testing.T) {
-	peer := "Bluetooth"
+	controller := control.NewSession("0000")
 	session := NewSession(Hooks{
-		Code:    func() string { return "0000" },
-		SetPeer: func(value string) { peer = value },
+		Control: controller,
 	})
 	session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
-	if peer != "Bluetooth" {
-		t.Fatalf("peer %q", peer)
+	if controller.Peer() != "Bluetooth" {
+		t.Fatalf("peer %q", controller.Peer())
 	}
 	actions := session.Kick()
-	if len(actions) != 1 || !actions[0].Broadcast || string(actions[0].Notify) != `{"t":"bye","reason":"kicked"}` {
+	if len(actions) != 2 || !actions[0].Broadcast || string(actions[0].Notify) != `{"t":"bye","reason":"kicked"}` {
 		t.Fatalf("kick %#v", actions)
 	}
-	if session.Authed() != "" || peer != "" {
-		t.Fatalf("after kick authed=%q peer=%q", session.Authed(), peer)
+	if session.Authed() != "" || controller.Peer() != "" {
+		t.Fatalf("after kick authed=%q peer=%q", session.Authed(), controller.Peer())
 	}
 	session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
 	session.Drop("other")
@@ -121,5 +121,34 @@ func TestKickAndDrop(t *testing.T) {
 	session.Drop("phone")
 	if session.Authed() != "" {
 		t.Fatal("drop phone")
+	}
+}
+
+func TestReauthenticationWaitsForDisplacementCleanup(t *testing.T) {
+	controller := control.NewSession("0000")
+	cleaning, resume := make(chan struct{}), make(chan struct{})
+	session := NewSession(Hooks{Control: controller, OnActions: func(actions []Action) {
+		if len(actions) == 2 && actions[1].Drop == "phone" {
+			close(cleaning)
+			<-resume
+		}
+	}})
+	session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
+	_, revoke := controller.Claim("0000", &control.Owner{Name: "LAN"})
+	revoked := make(chan struct{})
+	go func() { revoke(); close(revoked) }()
+	<-cleaning
+	authenticated := make(chan struct{})
+	go func() { session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`)); close(authenticated) }()
+	select {
+	case <-authenticated:
+		t.Fatal("reauthentication raced with stale disconnect")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(resume)
+	<-revoked
+	<-authenticated
+	if session.Authed() != "phone" || controller.Peer() != "Bluetooth" {
+		t.Fatal("cleanup revoked new session")
 	}
 }

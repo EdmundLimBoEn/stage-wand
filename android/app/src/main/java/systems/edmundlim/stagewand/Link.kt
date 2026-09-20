@@ -37,6 +37,7 @@ class Link(
         .retryOnConnectionFailure(false)
         .build()
     private var socket: WebSocket? = null
+    private var closed = false
     private var live = false
     private var settings = Settings()
     private val buffered = ArrayDeque<Command>()
@@ -58,6 +59,7 @@ class Link(
     }
 
     fun update(settings: Settings) {
+        if (closed) return
         val reconnect = settings.pairingCode != this.settings.pairingCode ||
             settings.manualHost.trim() != this.settings.manualHost.trim() ||
             settings.transport != this.settings.transport
@@ -76,6 +78,7 @@ class Link(
     }
 
     fun start() {
+        if (closed) return
         if (settings.pairingCode.isEmpty()) {
             state = State.EnterCode
             notifyChanged()
@@ -85,6 +88,7 @@ class Link(
     }
 
     fun send(command: Command) {
+        if (closed) return
         when (command) {
             is Command.Auth -> return
             is Command.Move -> if (state == State.Authed && (command.dx != 0.0 || command.dy != 0.0) && command.dx.isFinite() && command.dy.isFinite()) enqueue(command)
@@ -100,7 +104,7 @@ class Link(
     }
 
     private fun connect() {
-        if (live) return
+        if (closed || live) return
         if (settings.pairingCode.isEmpty()) {
             state = State.EnterCode
             notifyChanged()
@@ -233,7 +237,7 @@ class Link(
             val sent = if (socket != null) {
                 socket?.send(command.encode()) == true
             } else {
-                bluetooth.send(command.encode().toByteArray(StandardCharsets.UTF_8))
+                bluetooth.send(command)
             }
             if (!sent) {
                 sending = false
@@ -252,10 +256,26 @@ class Link(
     }
 
     private fun scheduleReconnect() {
+        if (closed) return
         val id = generation.get()
         main.postDelayed({
             if (generation.get() == id) connect()
         }, 1000)
+    }
+
+    fun close() {
+        if (closed) return
+        closed = true
+        onChange = null
+        resetConnection()
+        buffered.clear()
+        main.removeCallbacksAndMessages(null)
+        discovery.onResults = null
+        discovery.onDenied = null
+        discovery.stop()
+        bluetooth.onName = null
+        client.dispatcher.executorService.shutdown()
+        client.connectionPool.evictAll()
     }
 
     private fun resetConnection() {

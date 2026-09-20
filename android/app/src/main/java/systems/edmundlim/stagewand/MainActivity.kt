@@ -111,6 +111,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        link.close()
         KeepAliveService.listener = null
         stopService(Intent(this, KeepAliveService::class.java))
         super.onDestroy()

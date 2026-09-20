@@ -45,3 +45,8 @@ Physical setup and acceptance checks for Stage Wand. Start with [README.md](READ
 - [ ] If Bluetooth direct will not pair within 15 seconds, switch to Wi‑Fi nearby or join the iPhone Personal Hotspot from the Mac and retry; record which route you presented with.
 - [ ] Retest sustained trackpad movement on Wi‑Fi nearby only if Bluetooth direct is unavailable; report any pause/burst behavior and the displayed route.
 - [ ] For a USB comparison, enable iPhone Personal Hotspot, connect a data cable and trust the Mac. Confirm iPhone USB is active in Mac Network settings, then enter the Mac's USB-interface IP and Stage Wand port in Manual Host. Verify pairing, pointer movement, and locked volume/haptics separately.
+
+- [ ] Verify the corrected Windows build on a desktop: NEXT/PREV, Escape, and all desktop chords; `--selftest` must fail if injection is denied.
+- [ ] Verify cross-transport handover in both directions: pair one phone over Wi-Fi and another over Bluetooth, then confirm only the newest phone controls the host. Repeat a rapid reconnect during handover.
+- [ ] Verify the corrected Android trackpad: drag/pause/lift must not click; staggered two-finger tap must right-click; scrolling must not click on release; quick taps must move before clicking.
+- [ ] Verify Android Bluetooth movement for 30 seconds under radio congestion, then close and reopen the activity; confirm no delayed command burst or competing old connection.

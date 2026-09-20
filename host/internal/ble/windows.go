@@ -5,9 +5,12 @@ package ble
 import (
 	"errors"
 	"fmt"
+	"runtime"
+	"sync"
 	"syscall"
 	"unsafe"
 
+	"github.com/EdmundLimBoEn/stage-wand/host/internal/protocol"
 	"github.com/go-ole/go-ole"
 	"github.com/saltosystems/winrt-go"
 	winbt "github.com/saltosystems/winrt-go/windows/devices/bluetooth"
@@ -18,24 +21,63 @@ import (
 )
 
 type windowsPeripheral struct {
-	session  *Session
-	provider *genericattributeprofile.GattServiceProvider
-	reply    *genericattributeprofile.GattLocalCharacteristic
-	writeH   *foundation.TypedEventHandler
-	subH     *foundation.TypedEventHandler
+	stop      chan struct{}
+	closeOnce sync.Once
+	closeErr  error
+	session   *Session
+	provider  *genericattributeprofile.GattServiceProvider
+	reply     *genericattributeprofile.GattLocalCharacteristic
+	writeH    *foundation.TypedEventHandler
+	subH      *foundation.TypedEventHandler
 }
 
 func Start(hooks Hooks, localName string) Peripheral {
-	p, err := startWindows(hooks)
-	if err != nil {
-		return Unavailable(err)
+	type result struct {
+		peripheral *windowsPeripheral
+		err        error
 	}
-	_ = localName
-	return p
+	ready := make(chan result)
+	go func() {
+		leave, err := enterWinRT()
+		if err != nil {
+			ready <- result{err: err}
+			return
+		}
+		defer leave()
+		p, err := startWindows(hooks)
+		if err != nil {
+			ready <- result{err: err}
+			return
+		}
+		p.stop = make(chan struct{})
+		ready <- result{peripheral: p}
+		// Keep the MTA alive for the provider's entire advertising lifetime.
+		<-p.stop
+	}()
+	started := <-ready
+	if started.err != nil {
+		return Unavailable(started.err)
+	}
+	return started.peripheral
+}
+
+func enterWinRT() (func(), error) {
+	runtime.LockOSThread()
+	err := ole.RoInitialize(1)
+	if err != nil {
+		var result *ole.OleError
+		if !errors.As(err, &result) || result.Code() != 1 {
+			runtime.UnlockOSThread()
+			return nil, err
+		}
+	}
+	return func() {
+		syscall.NewLazyDLL("combase.dll").NewProc("RoUninitialize").Call()
+		runtime.UnlockOSThread()
+	}, nil
 }
 
 func startWindows(hooks Hooks) (*windowsPeripheral, error) {
-	_ = ole.RoInitialize(1)
 	op, err := genericattributeprofile.GattServiceProviderCreateAsync(guid(ServiceUUID))
 	if err != nil {
 		return nil, err
@@ -61,7 +103,9 @@ func startWindows(hooks Hooks) (*windowsPeripheral, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &windowsPeripheral{session: NewSession(hooks), provider: provider}
+	p := &windowsPeripheral{provider: provider}
+	hooks.OnActions = p.apply
+	p.session = NewSession(hooks)
 	writeGUID := winrt.ParameterizedInstanceGUID(
 		foundation.GUIDTypedEventHandler,
 		genericattributeprofile.SignatureGattLocalCharacteristic,
@@ -114,15 +158,25 @@ func (p *windowsPeripheral) Note() string {
 }
 
 func (p *windowsPeripheral) Kick() {
-	p.apply(p.session.Kick())
+	p.session.Kick()
 }
 
 func (p *windowsPeripheral) Close() error {
-	p.Kick()
-	if p.provider != nil {
-		_ = p.provider.StopAdvertising()
-	}
-	return nil
+	p.closeOnce.Do(func() {
+		leave, err := enterWinRT()
+		if err != nil {
+			p.closeErr = err
+			close(p.stop)
+			return
+		}
+		defer leave()
+		p.Kick()
+		if p.provider != nil {
+			p.closeErr = p.provider.StopAdvertising()
+		}
+		close(p.stop)
+	})
+	return p.closeErr
 }
 
 func (p *windowsPeripheral) addChar(service *genericattributeprofile.GattLocalService, uuid string, props genericattributeprofile.GattCharacteristicProperties) (*genericattributeprofile.GattLocalCharacteristic, error) {
@@ -149,6 +203,11 @@ func (p *windowsPeripheral) addChar(service *genericattributeprofile.GattLocalSe
 }
 
 func (p *windowsPeripheral) onWrite(args *genericattributeprofile.GattWriteRequestedEventArgs) {
+	leave, initErr := enterWinRT()
+	if initErr != nil {
+		return
+	}
+	defer leave()
 	if args == nil {
 		return
 	}
@@ -156,11 +215,14 @@ func (p *windowsPeripheral) onWrite(args *genericattributeprofile.GattWriteReque
 	if err == nil && deferral != nil {
 		defer deferral.Complete()
 	}
-	client := "windows"
+	client := ""
 	if session, err := args.GetSession(); err == nil {
 		if id, err := gattSessionDeviceID(session); err == nil && id != "" {
 			client = id
 		}
+	}
+	if client == "" {
+		return
 	}
 	op, err := args.GetRequestAsync()
 	if err != nil {
@@ -179,13 +241,18 @@ func (p *windowsPeripheral) onWrite(args *genericattributeprofile.GattWriteReque
 		return
 	}
 	payload := bufferToSlice(buf)
-	p.apply(p.session.Handle(client, payload))
+	p.session.Handle(client, payload)
 	if option, err := req.GetOption(); err == nil && option == genericattributeprofile.GattWriteOptionWriteWithResponse {
 		_ = req.Respond()
 	}
 }
 
 func (p *windowsPeripheral) apply(actions []Action) {
+	leave, initErr := enterWinRT()
+	if initErr != nil {
+		return
+	}
+	defer leave()
 	for _, action := range actions {
 		if len(action.Notify) > 0 {
 			if action.Broadcast {
@@ -195,7 +262,9 @@ func (p *windowsPeripheral) apply(actions []Action) {
 			}
 		}
 		if action.Drop != "" {
-			p.session.Drop(action.Drop)
+			if action.Reason != "" {
+				_ = p.notifyClient(action.Drop, mustReply(protocol.Bye{Reason: action.Reason}))
+			}
 		}
 	}
 }
@@ -217,10 +286,13 @@ func (p *windowsPeripheral) notifyAll(payload []byte) error {
 }
 
 func (p *windowsPeripheral) notifyAuthed(payload []byte) error {
-	authed := p.session.Authed()
-	client := p.subscribed(authed)
+	return p.notifyClient(p.session.Authed(), payload)
+}
+
+func (p *windowsPeripheral) notifyClient(id string, payload []byte) error {
+	client := p.subscribed(id)
 	if client == nil {
-		return p.notifyAll(payload)
+		return errors.New("client is not subscribed")
 	}
 	buf, err := sliceToBuffer(payload)
 	if err != nil {
@@ -264,6 +336,11 @@ func (p *windowsPeripheral) subscribed(id string) *genericattributeprofile.GattS
 }
 
 func (p *windowsPeripheral) pruneSubscribers() {
+	leave, initErr := enterWinRT()
+	if initErr != nil {
+		return
+	}
+	defer leave()
 	authed := p.session.Authed()
 	if authed == "" {
 		return

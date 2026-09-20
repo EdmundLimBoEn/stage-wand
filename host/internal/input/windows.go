@@ -35,9 +35,7 @@ var (
 	procSendInput = user32.NewProc("SendInput")
 )
 
-type mouseInput struct {
-	Type      uint32
-	_         uint32
+type mouseData struct {
 	Dx        int32
 	Dy        int32
 	MouseData uint32
@@ -46,14 +44,17 @@ type mouseInput struct {
 	Extra     uintptr
 }
 
-type kbdInput struct {
-	Type  uint32
-	_     uint32
+type keyboardData struct {
 	Vk    uint16
 	Scan  uint16
 	Flags uint32
 	Time  uint32
 	Extra uintptr
+}
+
+type inputRecord struct {
+	Type uint32
+	Data mouseData
 }
 
 type SendInputInjector struct{}
@@ -151,12 +152,14 @@ func chord(keys []uint16) error {
 }
 
 func sendMouse(dx, dy int32, data, flags uint32) error {
-	in := mouseInput{Type: inputMouse, Dx: dx, Dy: dy, MouseData: data, Flags: flags}
+	in := inputRecord{Type: inputMouse, Data: mouseData{Dx: dx, Dy: dy, MouseData: data, Flags: flags}}
 	return send(unsafe.Pointer(&in), unsafe.Sizeof(in))
 }
 
 func sendKey(vk uint16, flags uint32) error {
-	in := kbdInput{Type: inputKeyboard, Vk: vk, Flags: flags}
+	in := inputRecord{Type: inputKeyboard}
+	// INPUT always reserves its full union, even for the smaller KEYBDINPUT member.
+	*(*keyboardData)(unsafe.Pointer(&in.Data)) = keyboardData{Vk: vk, Flags: flags}
 	return send(unsafe.Pointer(&in), unsafe.Sizeof(in))
 }
 

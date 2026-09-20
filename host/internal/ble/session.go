@@ -3,120 +3,143 @@ package ble
 import (
 	"sync"
 
+	"github.com/EdmundLimBoEn/stage-wand/host/internal/control"
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/protocol"
 )
 
-// Hooks are the host session and input injector. BLE code calls these and
-// does not import the WebSocket server.
 type Hooks struct {
-	Code      func() string
-	SetPeer   func(string)
+	Control   *control.Session
 	OnCommand func(protocol.Command)
+	OnActions func([]Action)
 }
 
-// Action is work the GATT adapter applies after a write, kick, or disconnect.
 type Action struct {
 	Notify    []byte
 	Broadcast bool
 	Drop      string
+	Reason    string
 }
 
-// Session is the Apple BluetoothServer policy: the host is the GATT
-// peripheral, one authed central, JSON Command/Reply on the frozen UUIDs.
 type Session struct {
-	hooks  Hooks
-	mu     sync.Mutex
-	authed string
+	hooks      Hooks
+	mu         sync.Mutex
+	operations sync.Mutex
+	authed     string
+	owner      *control.Owner
 }
 
 func NewSession(hooks Hooks) *Session {
-	if hooks.Code == nil {
-		hooks.Code = func() string { return "" }
-	}
-	if hooks.SetPeer == nil {
-		hooks.SetPeer = func(string) {}
+	if hooks.Control == nil {
+		panic("BLE requires a shared control session")
 	}
 	if hooks.OnCommand == nil {
 		hooks.OnCommand = func(protocol.Command) {}
+	}
+	if hooks.OnActions == nil {
+		hooks.OnActions = func([]Action) {}
 	}
 	return &Session{hooks: hooks}
 }
 
 func (s *Session) Handle(client string, payload []byte) []Action {
-	if client == "" {
-		client = "unknown"
+	s.operations.Lock()
+	actions, revoke := s.handle(client, payload)
+	if len(actions) > 0 {
+		s.hooks.OnActions(actions)
+	}
+	s.operations.Unlock()
+	if revoke != nil {
+		revoke()
+	}
+	return actions
+}
+
+func (s *Session) handle(client string, payload []byte) ([]Action, func()) {
+	if client == "" || client == "unknown" {
+		return nil, nil
 	}
 	command, err := protocol.ParseCommand(payload)
-	s.mu.Lock()
-	authed := s.authed
-	s.mu.Unlock()
-	if authed != client {
-		if err != nil {
-			return nil
-		}
-		auth, ok := command.(protocol.Auth)
-		if !ok {
-			return nil
-		}
-		if auth.Code != s.hooks.Code() {
-			if authed == "" {
-				return []Action{{Notify: mustReply(protocol.Bye{Reason: protocol.ReasonBadAuth}), Broadcast: true}}
-			}
-			return []Action{{Drop: client}}
-		}
-		var actions []Action
-		if authed != "" && authed != client {
-			actions = append(actions, Action{Drop: authed})
-		}
-		s.mu.Lock()
-		s.authed = client
-		s.mu.Unlock()
-		s.hooks.SetPeer("Bluetooth")
-		return append(actions, Action{Notify: mustReply(protocol.Status{})})
-	}
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	switch v := command.(type) {
-	case protocol.Auth:
-		if v.Code == s.hooks.Code() {
-			return []Action{{Notify: mustReply(protocol.Status{})}}
+	s.mu.Lock()
+	if auth, ok := command.(protocol.Auth); ok {
+		owner := &control.Owner{Name: "Bluetooth"}
+		owner.Revoke = func(reason string) {
+			s.operations.Lock()
+			defer s.operations.Unlock()
+			s.mu.Lock()
+			if s.owner != owner {
+				s.mu.Unlock()
+				return
+			}
+			s.authed, s.owner = "", nil
+			s.mu.Unlock()
+			s.hooks.OnActions([]Action{{Notify: mustReply(protocol.Bye{Reason: reason}), Broadcast: true}, {Drop: client}})
 		}
-		return nil
-	case protocol.Move:
-		if !protocol.MoveInRange(v.Dx, v.Dy) {
-			return nil
+		accepted, revoke := s.hooks.Control.Claim(auth.Code, owner)
+		if !accepted {
+			idle := s.authed == ""
+			if s.authed == client {
+				s.hooks.Control.Release(s.owner)
+				s.authed, s.owner = "", nil
+			}
+			s.mu.Unlock()
+			if idle {
+				return []Action{{Notify: mustReply(protocol.Bye{Reason: protocol.ReasonBadAuth}), Broadcast: true}}, nil
+			}
+			return []Action{{Drop: client}}, nil
 		}
-		s.hooks.OnCommand(v)
-	case protocol.Scroll:
-		s.hooks.OnCommand(v)
-	default:
-		s.hooks.OnCommand(command)
+		old := s.authed
+		s.authed, s.owner = client, owner
+		s.mu.Unlock()
+		var actions []Action
+		if old != "" && old != client {
+			actions = append(actions, Action{Drop: old, Reason: protocol.ReasonDisplaced})
+		}
+		return append(actions, Action{Notify: mustReply(protocol.Status{})}), revoke
 	}
-	return nil
+	if s.authed != client {
+		s.mu.Unlock()
+		return nil, nil
+	}
+	owner := s.owner
+	s.mu.Unlock()
+	if move, ok := command.(protocol.Move); ok && !protocol.MoveInRange(move.Dx, move.Dy) {
+		return nil, nil
+	}
+	s.hooks.Control.Dispatch(owner, func() { s.hooks.OnCommand(command) })
+	return nil, nil
 }
 
 func (s *Session) Kick() []Action {
+	s.operations.Lock()
+	defer s.operations.Unlock()
 	s.mu.Lock()
-	authed := s.authed
-	s.authed = ""
+	authed, owner := s.authed, s.owner
+	s.authed, s.owner = "", nil
 	s.mu.Unlock()
+	s.hooks.Control.Release(owner)
 	if authed == "" {
 		return nil
 	}
-	s.hooks.SetPeer("")
-	return []Action{{Notify: mustReply(protocol.Bye{Reason: protocol.ReasonKicked}), Broadcast: true}}
+	actions := []Action{{Notify: mustReply(protocol.Bye{Reason: protocol.ReasonKicked}), Broadcast: true}, {Drop: authed}}
+	s.hooks.OnActions(actions)
+	return actions
 }
 
 func (s *Session) Drop(client string) {
+	s.operations.Lock()
+	defer s.operations.Unlock()
 	s.mu.Lock()
 	if s.authed != client {
 		s.mu.Unlock()
 		return
 	}
-	s.authed = ""
+	owner := s.owner
+	s.authed, s.owner = "", nil
 	s.mu.Unlock()
-	s.hooks.SetPeer("")
+	s.hooks.Control.Release(owner)
 }
 
 func (s *Session) Authed() string {
@@ -126,9 +149,6 @@ func (s *Session) Authed() string {
 }
 
 func mustReply(reply protocol.Reply) []byte {
-	data, err := protocol.EncodeReply(reply)
-	if err != nil {
-		return nil
-	}
+	data, _ := protocol.EncodeReply(reply)
 	return data
 }
