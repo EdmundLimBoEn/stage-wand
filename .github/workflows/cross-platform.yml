@@ -10,6 +10,9 @@ on:
       - main
       - dev
 
+permissions:
+  contents: read
+
 jobs:
   protocol:
     runs-on: ubuntu-latest
@@ -82,6 +85,7 @@ jobs:
         run: bash host/arch/check.sh
       - name: Build and install the PKGBUILD
         run: |
+          set -euo pipefail
           useradd -m builder
           cp -a "$GITHUB_WORKSPACE" /home/builder/stage-wand
           chown -R builder:builder /home/builder/stage-wand
@@ -91,12 +95,101 @@ jobs:
           command -v stagewand-host
           stagewand-host --diagnose
           stagewand-host --selftest --dry-run
-      - name: Upload Linux package artifact
-        if: github.event_name == 'push'
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp /home/builder/stage-wand/host/arch/stagewand-host-*.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
+          pkg=$(ls "$GITHUB_WORKSPACE/dist"/stagewand-host-*.pkg.tar.zst | head -n1)
+          cp "$pkg" "$GITHUB_WORKSPACE/dist/stagewand-host-x86_64.pkg.tar.zst"
+      - name: Upload Arch Linux package
         uses: actions/upload-artifact@v4
         with:
-          name: stagewand-host-arch-linux-${{ github.ref_name }}-${{ github.sha }}
-          path: /home/builder/stage-wand/host/arch/stagewand-host-*.pkg.tar.zst
+          name: linux-arch
+          path: dist/stagewand-host*.pkg.tar.zst
+          if-no-files-found: error
+
+  host-deb:
+    name: host (Debian/Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: host/go.sum
+      - name: Install Debian packaging tools and Qt 6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ qt6-base-dev qt6-base-dev-tools libgl1-mesa-dev dpkg-dev
+      - name: Check and build the .deb
+        run: |
+          chmod +x host/debian/build.sh host/debian/check.sh host/debian/postinst
+          bash host/debian/check.sh
+          bash host/debian/build.sh "$GITHUB_WORKSPACE/dist"
+      - name: Install the .deb and smoke the host
+        run: |
+          sudo apt-get install -y ./dist/stagewand-host_amd64.deb
+          command -v stagewand-host
+          command -v stagewand
+          stagewand-host --diagnose
+          stagewand-host --selftest --dry-run
+      - name: Upload Debian/Ubuntu package
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          path: dist/stagewand-host*.deb
+          if-no-files-found: error
+
+  linux-release:
+    name: publish Linux packages
+    needs: [host-arch, host-deb]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-arch
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-deb
+          path: dist
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum stagewand-host*.deb stagewand-host*.pkg.tar.zst > SHA256SUMS
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: linux
+          target_commitish: ${{ github.sha }}
+          name: Linux packages
+          make_latest: true
+          body: |
+            Packages from `${{ github.sha }}` on `main`.
+
+            **Arch Linux**
+
+            ```sh
+            curl -fL -O https://github.com/${{ github.repository }}/releases/latest/download/stagewand-host-x86_64.pkg.tar.zst
+            sudo pacman -U ./stagewand-host-x86_64.pkg.tar.zst
+            ```
+
+            **Debian or Ubuntu**
+
+            ```sh
+            curl -fL -O https://github.com/${{ github.repository }}/releases/latest/download/stagewand-host_amd64.deb
+            sudo apt install ./stagewand-host_amd64.deb
+            ```
+
+            Log out of the graphical session and back in if `/dev/uinput` is not writable yet.
+          fail_on_unmatched_files: true
+          files: |
+            dist/stagewand-host_amd64.deb
+            dist/stagewand-host_*_amd64.deb
+            dist/stagewand-host-x86_64.pkg.tar.zst
+            dist/stagewand-host-*.pkg.tar.zst
+            dist/SHA256SUMS
 
   android:
     runs-on: ubuntu-latest
