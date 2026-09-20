@@ -64,6 +64,28 @@ func TestArchUinputPackaging(t *testing.T) {
 	if !strings.Contains(readme, "apt install golang-go git") {
 		t.Fatal("README must show the Debian install line")
 	}
+	if !strings.Contains(readme, "stagewand-host_amd64.deb") {
+		t.Fatal("README must show the Debian/Ubuntu .deb download")
+	}
+	if !strings.Contains(readme, "stagewand-host-x86_64.pkg.tar.zst") {
+		t.Fatal("README must show the Arch package download")
+	}
+	control := readFile(t, filepath.Join(hostDir, "debian", "control"))
+	for _, dep := range []string{"ydotool", "xdotool", "libei"} {
+		if strings.Contains(control, dep) {
+			t.Fatalf("debian control must not depend on %s", dep)
+		}
+	}
+	if !strings.Contains(control, "libqt6widgets6") {
+		t.Fatal("debian control must depend on Qt 6 widgets")
+	}
+	if !strings.Contains(control, "libqt6core6t64") {
+		t.Fatal("debian control must accept Ubuntu t64 Qt packages")
+	}
+	postinst := readFile(t, filepath.Join(hostDir, "debian", "postinst"))
+	if !strings.Contains(postinst, "udevadm") {
+		t.Fatal("debian postinst must reload udev")
+	}
 }
 
 func testHostDir(t *testing.T) string {

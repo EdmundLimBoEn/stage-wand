@@ -1,4 +1,4 @@
-.PHONY: build windows test arch-check
+.PHONY: build windows test arch-check debian-check deb
 build:
 	go build -buildvcs=false -o stagewand-host ./cmd/stagewand-host
 windows:
@@ -7,6 +7,10 @@ test:
 	go test ./internal/... ./cmd/... .
 arch-check:
 	bash arch/check.sh
+debian-check:
+	bash debian/check.sh
+deb:
+	bash debian/build.sh
 
 .PHONY: desktop
 desktop: build

@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+if command -v systemd-modules-load >/dev/null 2>&1; then
+  systemd-modules-load || true
+fi
+if command -v udevadm >/dev/null 2>&1; then
+  udevadm control --reload || true
+  udevadm trigger --action=add --subsystem-match=misc || true
+fi
+echo "If /dev/uinput is still not writable, log out of the graphical session and log in again so logind applies uaccess."
+
+exit 0

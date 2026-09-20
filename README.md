@@ -79,9 +79,29 @@ The Linux companion injects mouse and key events through `/dev/uinput`, advertis
 
 The injector is in-process uinput. That works on Wayland and X11 because the kernel presents a virtual evdev device. Do not install xdotool, ydotool, or libei for Stage Wand. extra/xdotool talks to X11 only. extra/ydotool is a second process on the same uinput node, plus a daemon. extra/libei needs a desktop portal that Hyprland and Sway do not fully expose. No AUR package is required.
 
+### Install from GitHub Releases
+
+Each push or merge to `main` publishes Linux packages: a Debian/Ubuntu `.deb` and an Arch `.pkg.tar.zst`. Both include the tray app (`stagewand`), the CLI host (`stagewand-host`), the uinput udev rule, and the boot module config.
+
+**Arch Linux**
+
+```sh
+curl -fL -O https://github.com/EdmundLimBoEn/stage-wand/releases/latest/download/stagewand-host-x86_64.pkg.tar.zst
+sudo pacman -U ./stagewand-host-x86_64.pkg.tar.zst
+```
+
+**Debian or Ubuntu**
+
+```sh
+curl -fL -O https://github.com/EdmundLimBoEn/stage-wand/releases/latest/download/stagewand-host_amd64.deb
+sudo apt install ./stagewand-host_amd64.deb
+```
+
+Launch **Stage Wand** from the application menu, or run `stagewand`. Log out of the graphical session and log in again if `/dev/uinput` is not yet writable for your seat.
+
 ### Install on Arch Linux
 
-For the system tray app with a pairing window, build and install the Arch package:
+For the system tray app with a pairing window, build and install the Arch package from this checkout:
 
 ```sh
 sudo pacman -S --needed go git gcc base-devel cmake qt6-base
@@ -136,7 +156,7 @@ makepkg -si
 
 That installs `/usr/bin/stagewand`, its application launcher and icon, `/usr/bin/stagewand-host`, the udev rule under `/usr/lib/udev/rules.d/`, and a modules-load file so `uinput` loads at boot.
 
-### Install on Debian or Ubuntu
+### Build on Debian or Ubuntu without a package
 
 ```sh
 sudo apt install golang-go git bluez
@@ -151,6 +171,14 @@ sudo udevadm trigger --action=add --subsystem-match=misc
 ```
 
 Log out of the graphical session and log in again, then run `./stagewand-host`.
+
+To build the Debian/Ubuntu package locally (same layout as the GitHub Release):
+
+```sh
+sudo apt install golang-go cmake g++ qt6-base-dev qt6-base-dev-tools libgl1-mesa-dev dpkg-dev
+make -C host deb
+sudo apt install ./host/debian/stagewand-host_amd64.deb
+```
 
 ### Session types
 
@@ -241,6 +269,7 @@ Verified in this repository's CI environment:
 - Kotlin protocol, square-unlock, command-queue, connection-URL, tap/drag gesture, and Bluetooth backpressure tests
 - `./gradlew :app:assembleDebug`
 - Arch Linux `archlinux:latest` with `pacman -S --needed go git gcc base-devel`, `bash host/arch/check.sh`, and `makepkg -f` for `stagewand-host`
+- Ubuntu `dpkg-deb` package for `stagewand-host` (tray app plus CLI), installed with `apt`
 
 Not verified on hardware in this change:
 
