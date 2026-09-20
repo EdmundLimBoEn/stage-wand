@@ -1,0 +1,12 @@
+---
+description: Solo main/dev worktrees — keep this checkout on dev
+alwaysApply: true
+---
+
+# Git workflow
+
+Edmund is the sole contributor. Do not invent PR/review process.
+
+- This directory stays on `dev`. For real work, `./scripts/worktree add <slug>` and edit in `../stage-wand-trees/…`. Never `git switch` this folder off `dev`.
+- Never commit to `main`. Land features by merging into `dev` when asked. Promote `dev` → `main` only when asked to ship. Hotfixes are `hotfix/*` from `main`, merged into `dev` too.
+- One branch per worktree. No force-push of `main` or `dev`. No GitHub PR unless he asks.

@@ -1,0 +1,32 @@
+name: Branch policy
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce promotion path
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$BASE" = "main" ]; then
+            case "$HEAD" in
+              dev|hotfix/*) ;;
+              *)
+                echo "PRs into main must come from \`dev\` (promotion) or \`hotfix/*\`."
+                echo "Open this PR against \`dev\` instead."
+                exit 1
+                ;;
+            esac
+          fi
+          if [ "$BASE" = "dev" ] && [ "$HEAD" = "main" ]; then
+            echo "Do not open PRs from main into dev."
+            exit 1
+          fi
