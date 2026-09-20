@@ -33,6 +33,22 @@ The injector is in-process uinput. That works on Wayland and X11 because the ker
 
 ### Install on Arch Linux
 
+For the system tray app with a pairing window, build and install the Arch package:
+
+```sh
+sudo pacman -S --needed go git gcc base-devel cmake qt6-base
+cd host/arch
+makepkg -si
+```
+
+Launch **Stage Wand** from the application menu, or run `stagewand`. It shows the pairing code, phone connection, input readiness, Bluetooth status, and LAN address. **Copy code** copies the current code; **Disconnect & new code** disconnects the phone and rotates it. Closing the window keeps the host in the system tray. Click its icon or launch Stage Wand again to reopen it. **Quit Stage Wand** stops the host and Bluetooth advertisement. Stop any terminal-launched host before opening the tray app.
+
+The tray app uses Qt 6's [system tray support](https://doc.qt.io/qt-6/qsystemtrayicon.html). On desktops without a tray, the pairing window stays available and closing it quits. The CLI remains available as `stagewand-host`.
+
+To build the desktop app without installing a package, run `make -C host desktop`, then `host/desktop/build/stagewand`. Run its lifecycle tests with `ctest --test-dir host/desktop/build --output-on-failure`.
+
+For just the command-line host:
+
 Build dependencies are extra/go, extra/git, and (for the PKGBUILD) core/gcc. From the repository root:
 
 ```sh
@@ -65,12 +81,12 @@ If `/dev/uinput` is missing or not writable, the host still accepts connections 
 Optional package from this checkout (needs core/gcc and the `base-devel` group for `makepkg`):
 
 ```sh
-sudo pacman -S --needed go git gcc base-devel
+sudo pacman -S --needed go git gcc base-devel cmake qt6-base
 cd host/arch
 makepkg -si
 ```
 
-That installs `/usr/bin/stagewand-host`, the udev rule under `/usr/lib/udev/rules.d/`, and a modules-load file so `uinput` loads at boot.
+That installs `/usr/bin/stagewand`, its application launcher and icon, `/usr/bin/stagewand-host`, the udev rule under `/usr/lib/udev/rules.d/`, and a modules-load file so `uinput` loads at boot.
 
 ### Install on Debian or Ubuntu
 

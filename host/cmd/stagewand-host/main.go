@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 )
 
 func main() {
+	jsonStatus := flag.Bool("json-status", false, "emit JSON status updates for the desktop app")
 	serve := flag.Bool("serve", false, "headless test server with pairing code 0000")
 	selftest := flag.Bool("selftest", false, "inject a short movement, click, Esc, and scroll")
 	diagnose := flag.Bool("diagnose", false, "print uinput and session probe, then exit")
@@ -105,24 +108,35 @@ func main() {
 	if injectNote != "" {
 		readyNote = injectNote
 	}
-	_ = ready
 	ip := lan.IPv4()
 	mdnsNote := "advertised _stagewand._tcp"
 	if mdnsErr != nil {
 		mdnsNote = "unavailable (" + mdnsErr.Error() + "); use manual host:port"
 	}
-	printUI(session, ip, port, readyNote, mdnsNote, bleDev.Note())
-	go stdinKick(session, srv, bleDev, func() { printUI(session, ip, port, readyNote, mdnsNote, bleDev.Note()) })
+	var outputMu sync.Mutex
+	var last string
+	redraw := func() {
+		outputMu.Lock()
+		defer outputMu.Unlock()
+		var snap string
+		if *jsonStatus {
+			data, _ := json.Marshal(desktopStatus(session, ip, port, ready, readyNote, mdnsNote, bleDev.Note()))
+			snap = string(data) + "\n"
+		} else {
+			snap = snapshot(session, ip, port, readyNote, mdnsNote, bleDev.Note())
+		}
+		if snap != last {
+			last = snap
+			fmt.Print(snap)
+		}
+	}
+	redraw()
+	go stdinKick(session, srv, bleDev, redraw)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	go func() {
-		var last string
 		for range ticker.C {
-			snap := snapshot(session, ip, port, readyNote, mdnsNote, bleDev.Note())
-			if snap != last {
-				last = snap
-				fmt.Print(snap)
-			}
+			redraw()
 		}
 	}()
 	waitSignal()
@@ -235,4 +249,20 @@ func snapshot(session *server.Session, ip string, port int, inputNote, mdnsNote,
 	}
 	return fmt.Sprintf("\nStage Wand host\nPairing code:  %s\nListen:        %s\nInput:         %s\nPeer:          %s\nmDNS:          %s\nBluetooth:     %s\nType k then Enter to kick. Ctrl+C to quit.\n",
 		session.Code(), addr, inputNote, peer, mdnsNote, bleNote)
+}
+
+// DesktopStatus is the line-delimited status contract consumed by the tray app.
+type DesktopStatus struct {
+	Type       string `json:"type"`
+	Code       string `json:"code"`
+	Address    string `json:"address"`
+	Peer       string `json:"peer"`
+	InputReady bool   `json:"inputReady"`
+	Input      string `json:"input"`
+	MDNS       string `json:"mdns"`
+	Bluetooth  string `json:"bluetooth"`
+}
+
+func desktopStatus(session *server.Session, ip string, port int, ready bool, inputNote, mdnsNote, bleNote string) DesktopStatus {
+	return DesktopStatus{Type: "status", Code: session.Code(), Address: fmt.Sprintf("%s:%d", ip, port), Peer: session.Peer(), InputReady: ready, Input: inputNote, MDNS: mdnsNote, Bluetooth: bleNote}
 }

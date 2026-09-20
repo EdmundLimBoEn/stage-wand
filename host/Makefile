@@ -7,3 +7,10 @@ test:
 	go test ./internal/... ./cmd/... .
 arch-check:
 	bash arch/check.sh
+
+.PHONY: desktop
+desktop: build
+	cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release
+	cmake --build desktop/build
+	cp stagewand-host desktop/build/stagewand-host.tmp
+	mv -f desktop/build/stagewand-host.tmp desktop/build/stagewand-host

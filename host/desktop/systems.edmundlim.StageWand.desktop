@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Stage Wand
+Comment=Control this computer from your phone
+Exec=stagewand
+Icon=stagewand
+Terminal=false
+Categories=Office;Presentation;
+StartupNotify=true

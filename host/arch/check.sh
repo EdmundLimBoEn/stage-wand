@@ -27,7 +27,7 @@ grep -q 'uaccess' "$readme" || fail "README must mention uaccess"
 grep -q 'apt install golang-go git' "$readme" || fail "README must show the Debian install line"
 
 pkgbuild="$root/host/arch/PKGBUILD"
-grep -q "makedepends=('go' 'gcc')" "$pkgbuild" || fail "PKGBUILD must use extra/go and core/gcc"
+grep -q "makedepends=('go' 'gcc' 'cmake')" "$pkgbuild" || fail "PKGBUILD must use extra/go and core/gcc"
 grep -q -- '-buildvcs=false' "$pkgbuild" || fail "PKGBUILD must set -buildvcs=false"
 for dep in ydotool xdotool libei; do
   if grep -q "$dep" "$pkgbuild"; then

@@ -2,14 +2,14 @@
 
 pkgname=stagewand-host
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc='LAN WebSocket and Bluetooth LE host that injects Stage Wand pointer and key events via uinput'
 arch=('x86_64' 'aarch64')
 url='https://github.com/EdmundLimBoEn/stage-wand'
 license=('LicenseRef-NOASSERTION')
-depends=('glibc')
+depends=('glibc' 'qt6-base')
 optdepends=('bluez: Bluetooth LE GATT peripheral')
-makedepends=('go' 'gcc')
+makedepends=('go' 'gcc' 'cmake')
 install=stagewand-host.install
 options=('!debug' '!lto')
 source=()
@@ -35,9 +35,12 @@ build() {
   export CGO_LDFLAGS="${LDFLAGS}"
   GOFLAGS="-buildmode=pie -trimpath -mod=readonly -modcacherw -buildvcs=false" \
     go build -ldflags "-linkmode=external" -o "$srcdir/build/stagewand-host" ./cmd/stagewand-host
+  cmake -S "$_repodir/host/desktop" -B "$srcdir/desktop-build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build "$srcdir/desktop-build"
 }
 
 check() {
+  ctest --test-dir "$srcdir/desktop-build" --output-on-failure
   cd "$_repodir/host"
   export GOPATH="$srcdir/go"
   export GOCACHE="$srcdir/cache"
@@ -46,6 +49,7 @@ check() {
 }
 
 package() {
+  DESTDIR="$pkgdir" cmake --install "$srcdir/desktop-build"
   install -Dm755 "$srcdir/build/stagewand-host" "$pkgdir/usr/bin/stagewand-host"
   install -Dm644 "$_repodir/host/udev/70-stagewand-uinput.rules" "$pkgdir/usr/lib/udev/rules.d/70-stagewand-uinput.rules"
   install -Dm644 "$_repodir/host/modules-load.d/uinput.conf" "$pkgdir/usr/lib/modules-load.d/stagewand-uinput.conf"

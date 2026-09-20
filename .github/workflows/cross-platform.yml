@@ -74,7 +74,7 @@ jobs:
             printf '\nDisableSandbox\n' >> /etc/pacman.conf
           fi
           pacman -Syu --noconfirm --needed archlinux-keyring
-          pacman -Syu --noconfirm --needed go git gcc base-devel namcap
+          pacman -Syu --noconfirm --needed go git gcc base-devel namcap cmake qt6-base
       - uses: actions/checkout@v4
       - name: Trust the checkout for git and Go VCS
         run: git config --global --add safe.directory '*'
