@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Block ordinary commits on main. Merge commits (dev → main) are allowed.
+set -euo pipefail
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$branch" != "main" ]]; then
+  exit 0
+fi
+
+if git rev-parse --verify --quiet MERGE_HEAD >/dev/null; then
+  exit 0
+fi
+
+# A merge commit being amended still has multiple parents.
+if git rev-parse --quiet --verify 'HEAD^2' >/dev/null; then
+  exit 0
+fi
+
+cat >&2 <<'EOF'
+Direct commits on main are blocked.
+
+Land work on a feature branch, open a PR into `dev`, then promote with a PR
+from `dev` into `main`. For a production hotfix, branch `hotfix/*` from `main`
+and merge it into both `main` and `dev`.
+EOF
+exit 1

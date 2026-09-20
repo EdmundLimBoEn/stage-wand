@@ -6,6 +6,54 @@ The original pair is a native **iPhone** remote and a **macOS** menu-bar host. T
 
 The Apple pair needs macOS 14+, an iPhone running iOS 17+, Xcode with iOS device support, and XcodeGen. Hardware volume and locked-screen behavior must be tested on a real phone. Linux, Windows, and Android install notes are below.
 
+## Branches and worktrees
+
+This is a one-person repo. The split is for isolation, not review ceremony.
+
+| Branch | Meaning |
+| --- | --- |
+| `main` | Last thing you would present or ship. Always buildable. No direct commits. |
+| `dev` | Integration line. The checkout you keep open in Cursor. Can be slightly ahead of `main`. |
+| `feat/<slug>` | One task, one directory. Cut from `dev`. |
+| `hotfix/<slug>` | Production fix. Cut from `main`, then merge into `dev` too. |
+
+GitHub pull requests are optional. Use them when you want CI on a branch you are not ready to merge, or when promoting `dev` → `main`. Day to day, merge locally.
+
+Worktrees exist so you (and agents) can run two tasks at once without `git switch` in the directory you already have open. This clone **stays on `dev`**. A locked `main` checkout lives at `../stage-wand-trees/main`. Git will refuse to check the same branch out twice; that is intended.
+
+```sh
+./scripts/worktree setup                 # once per clone: hooks, local `dev`, locked `main`
+./scripts/worktree add my-change         # ../stage-wand-trees/feat-my-change, from `dev`
+./scripts/worktree add hotfix/crash main
+./scripts/worktree list
+./scripts/worktree rm my-change          # after the branch is merged
+```
+
+Open the new directory for that task. Do not `git switch` this folder to the feature branch.
+
+Land a finished task on `dev` (from this `dev` checkout):
+
+```sh
+git fetch origin
+git merge --ff-only feat/my-change       # or: git merge --no-ff feat/my-change
+git push origin dev
+./scripts/worktree rm my-change
+```
+
+Promote to production when you would actually use the build (rehearsal, a tagged point, a machine you install from):
+
+```sh
+git fetch origin
+git -C ../stage-wand-trees/main merge --ff-only origin/dev
+git push origin main
+```
+
+If `main` cannot fast-forward, merge `dev` into `main` as an explicit merge commit (hooks allow that) and merge `main` back into `dev` so the lines do not drift.
+
+Hotfix: `./scripts/worktree add hotfix/crash main`, ship it to `main`, merge the same branch into `dev`, then `./scripts/worktree rm hotfix/crash`.
+
+After a fresh clone, run `./scripts/worktree setup` so `.githooks` is installed (`core.hooksPath`). Agents should follow [AGENTS.md](AGENTS.md).
+
 ## Build and run
 
 Run these commands from the repository root:

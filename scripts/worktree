@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Shared-repo worktrees: one branch per directory, features off dev.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/worktree setup
+  scripts/worktree add <slug> [base]
+  scripts/worktree rm <slug>
+  scripts/worktree list
+
+setup  Configures hooks, ensures local `dev`, and adds a locked `main` worktree.
+add    Creates ../stage-wand-trees/<path> on branch feat/<slug> from base (default: dev).
+       Pass a slashy name (hotfix/foo) to use that branch name as-is.
+rm     Removes the worktree and deletes the local branch if it is fully merged.
+list   Shows git worktree list.
+EOF
+}
+
+repo_root() {
+  git rev-parse --show-toplevel
+}
+
+main_worktree() {
+  git worktree list --porcelain | awk '/^worktree / { print $2; exit }'
+}
+
+trees_dir() {
+  printf '%s/stage-wand-trees\n' "$(dirname "$(main_worktree)")"
+}
+
+branch_for_slug() {
+  local slug="$1"
+  case "$slug" in
+    feat/*|hotfix/*|fix/*|chore/*) printf '%s\n' "$slug" ;;
+    *) printf 'feat/%s\n' "$slug" ;;
+  esac
+}
+
+path_for_branch() {
+  local branch="$1"
+  printf '%s/%s\n' "$(trees_dir)" "${branch//\//-}"
+}
+
+cmd_setup() {
+  git config --local core.hooksPath .githooks
+  git config --local worktree.guessRemote true
+  git config --local push.default current
+
+  git fetch origin
+  git rev-parse --verify --quiet refs/heads/dev >/dev/null || git branch dev origin/main
+  git branch --set-upstream-to=origin/dev dev 2>/dev/null || true
+
+  local main_path
+  main_path="$(trees_dir)/main"
+  if ! git worktree list --porcelain | grep -qx "worktree ${main_path}"; then
+    if git worktree list --porcelain | awk '/^branch / { print $2 }' | grep -qx 'refs/heads/main'; then
+      echo "main is already checked out elsewhere; leaving it there."
+    else
+      mkdir -p "$(trees_dir)"
+      git worktree add "$main_path" main
+      git worktree lock "$main_path" --reason "production checkout; do not remove"
+    fi
+  fi
+  git worktree list
+}
+
+cmd_add() {
+  local slug="${1:-}"
+  local base="${2:-dev}"
+  if [[ -z "$slug" ]]; then
+    usage
+    exit 1
+  fi
+  git fetch origin
+  git rev-parse --verify --quiet "$base" >/dev/null || git rev-parse --verify --quiet "origin/$base" >/dev/null
+
+  local branch path start
+  branch="$(branch_for_slug "$slug")"
+  path="$(path_for_branch "$branch")"
+  if git show-ref --verify --quiet "refs/remotes/origin/$base"; then
+    start="origin/$base"
+  else
+    start="$base"
+  fi
+
+  mkdir -p "$(trees_dir)"
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    git worktree add "$path" "$branch"
+  else
+    git worktree add -b "$branch" "$path" "$start"
+  fi
+  echo "Worktree: $path"
+  echo "Branch:   $branch (from $start)"
+  echo "Open that directory in Cursor and PR into dev, not main."
+}
+
+cmd_rm() {
+  local slug="${1:-}"
+  if [[ -z "$slug" ]]; then
+    usage
+    exit 1
+  fi
+  local branch path
+  branch="$(branch_for_slug "$slug")"
+  path="$(path_for_branch "$branch")"
+  git worktree remove "$path"
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    git branch -d "$branch"
+  fi
+}
+
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  setup) cmd_setup "$@" ;;
+  add) cmd_add "$@" ;;
+  rm) cmd_rm "$@" ;;
+  list) git worktree list ;;
+  *) usage; exit 1 ;;
+esac
