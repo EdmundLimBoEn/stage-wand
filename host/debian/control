@@ -5,8 +5,9 @@ Priority: optional
 Architecture: @ARCH@
 Maintainer: Edmund Lim <me@edmundlim.systems>
 Homepage: https://github.com/EdmundLimBoEn/stage-wand
-Depends: libc6 (>= 2.35), libgcc-s1, libstdc++6, libqt6core6 (>= 6.2) | libqt6core6t64, libqt6gui6 (>= 6.2) | libqt6gui6t64, libqt6widgets6 (>= 6.2) | libqt6widgets6t64, libqt6dbus6 (>= 6.2) | libqt6dbus6t64
-Recommends: bluez
+Depends: @SHLIBS@, bluez, dbus, kmod, udev, qt6-qpa-plugins, qt6-wayland, hicolor-icon-theme
+Recommends: dbus-user-session
+Installed-Size: @INSTALLED_SIZE@
 Description: Stage Wand Linux host with tray app
  LAN WebSocket and Bluetooth LE host that injects Stage Wand pointer
  and key events via uinput. Includes the Qt 6 tray app (stagewand)

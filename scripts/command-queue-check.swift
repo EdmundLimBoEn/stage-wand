@@ -27,6 +27,24 @@ struct CommandQueueCheck {
         queue.append(.move(dx: 1, dy: 1))
         queue.removeAll()
         precondition(queue.popFirst() == nil)
-        print("Command queue checks passed: 1000 frames coalesced, exact sums, legal split, key/click barriers, scroll sums, reset")
+        for _ in 0..<1000 { queue.append(.scroll(dx: 1, dy: -2)) }
+        queue.append(.click(.left))
+        x = 0; y = 0
+        var pieces = 0
+        while let command = queue.popFirst() {
+            if case .click = command { break }
+            guard case .scroll(let dx, let dy) = command else { fatalError("Scroll reordered") }
+            precondition(abs(dx) <= 400 && abs(dy) <= 400)
+            x += dx; y += dy; pieces += 1
+        }
+        precondition(x == 1000 && y == -2000 && pieces == 5 && queue.isEmpty, "Scroll splitting lost distance")
+        for _ in 0..<64 { precondition(queue.append(.key(.right))) }
+        precondition(!queue.append(.click(.left)) && queue.isEmpty)
+        precondition(queue.append(.move(dx: 25_600, dy: 0)))
+        precondition(!queue.append(.move(dx: 0.1, dy: 0)) && queue.isEmpty)
+        precondition(!queue.append(.move(dx: 1e308, dy: 0)))
+        precondition(!queue.append(.scroll(dx: 0, dy: .nan)))
+        precondition(!queue.append(.scroll(dx: .infinity, dy: 0)) && queue.isEmpty)
+        print("Command queue checks passed: movement/scroll coalescing, exact sums, legal splits, key/click barriers, reset")
     }
 }

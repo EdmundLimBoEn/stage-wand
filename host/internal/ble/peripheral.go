@@ -1,7 +1,7 @@
 package ble
 
-// Peripheral is the GATT adapter. Start advertises the Stage Wand service.
-// Close and Kick are safe on a nil Peripheral.
+// Peripheral is the GATT adapter. Start returns a usable Peripheral even when
+// Bluetooth is unavailable; Note reports the current transport status.
 type Peripheral interface {
 	Close() error
 	Kick()

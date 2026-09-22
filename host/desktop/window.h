@@ -48,10 +48,13 @@ class Window : public QWidget {
     QAction *codeAction, *peerAction, *kickAction;
     QByteArray pending;
     QString diagnostics;
+    QTimer startupDeadline{this};
+    bool discardingLine = false;
+    bool acceptingStatus = false;
     bool quitting = false;
     QString executable;
     void stopHost() {
-        quitting = true; tray.hide();
+        quitting = true; acceptingStatus = false; startupDeadline.stop(); tray.hide();
         if (host.state() == QProcess::NotRunning) return;
         host.terminate();
         if (!host.waitForFinished(3000)) { host.kill(); host.waitForFinished(1000); }
@@ -64,6 +67,7 @@ class Window : public QWidget {
         layout->addWidget(l); return l;
     }
     void fail(const QString &message) {
+        acceptingStatus = false; startupDeadline.stop(); pending.clear(); discardingLine = false;
         code->setText("—"); peer->setText("Host unavailable");
         input->clear(); bluetooth->clear(); discovery->clear(); address->clear();
         error->setText(message); error->show();
@@ -72,9 +76,13 @@ class Window : public QWidget {
         retry->show(); tray.setToolTip("Stage Wand · host unavailable"); showWindow();
     }
     void start() {
-        if (host.state() != QProcess::NotRunning) return;
-        pending.clear(); diagnostics.clear(); error->hide(); retry->hide();
+        if (quitting || host.state() != QProcess::NotRunning) return;
+        pending.clear(); discardingLine = false; diagnostics.clear(); error->clear(); error->hide(); retry->hide();
         code->setText("…"); peer->setText("Starting host…");
+        input->clear(); bluetooth->clear(); discovery->clear(); address->clear();
+        codeAction->setText("Starting…"); peerAction->setText("Waiting for host");
+        kick->setEnabled(false); copy->setEnabled(false); kickAction->setEnabled(false);
+        tray.setToolTip("Stage Wand · starting host");
         const auto path = executable;
         if (!QFileInfo::exists(path)) { fail("Cannot find stagewand-host beside the Stage Wand application. Reinstall the package."); return; }
         // Do not leave an input-injecting host behind if the desktop process crashes.
@@ -82,30 +90,66 @@ class Window : public QWidget {
         host.setChildProcessModifier([parent] {
             if (prctl(PR_SET_PDEATHSIG, SIGTERM) != 0 || getppid() != parent) _exit(1);
         });
+        acceptingStatus = true;
         host.start(path, {"--json-status"});
+        startupDeadline.start();
+    }
+    void applyStatus(const QByteArray &line) {
+        const auto document = QJsonDocument::fromJson(line);
+        if (!document.isObject()) return;
+        const auto s = document.object();
+        if (s["type"].toString() != "status" || !s["inputReady"].isBool()) return;
+        for (const auto *field : {"code", "peer", "address", "input", "bluetooth", "mdns"}) {
+            if (!s[field].isString()) return;
+        }
+        const auto pin = s["code"].toString();
+        if (pin.size() != 4) return;
+        for (const auto ch : pin) if (ch < QLatin1Char('0') || ch > QLatin1Char('9')) return;
+        startupDeadline.stop();
+        const auto remote = s["peer"].toString();
+        code->setText(pin);
+        peer->setText(remote.isEmpty() ? "Waiting for phone" : "Connected · " + remote);
+        address->setText(s["address"].toString());
+        input->setText((s["inputReady"].toBool() ? "Input · " : "Input unavailable · ") + s["input"].toString());
+        const auto ble = s["bluetooth"].toString();
+        bluetooth->setText(ble.startsWith("advertising ") ? "Bluetooth · ready" : "Bluetooth · " + ble);
+        discovery->setText("Wi-Fi discovery · " + s["mdns"].toString());
+        codeAction->setText("Pairing code: " + pin); peerAction->setText(peer->text());
+        kick->setEnabled(true); copy->setEnabled(true); kickAction->setEnabled(true);
+        tray.setToolTip("Stage Wand · " + peer->text());
     }
     void readStatus() {
-        pending += host.readAllStandardOutput();
-        while (pending.contains('\n')) {
-            auto end = pending.indexOf('\n');
-            auto line = pending.left(end); pending.remove(0, end + 1);
-            auto s = QJsonDocument::fromJson(line).object();
-            if (s["type"].toString() != "status") continue;
-            const auto pin = s["code"].toString();
-            const auto remote = s["peer"].toString();
-            code->setText(pin);
-            peer->setText(remote.isEmpty() ? "Waiting for phone" : "Connected · " + remote);
-            address->setText(s["address"].toString());
-            input->setText((s["inputReady"].toBool() ? "Input · " : "Input unavailable · ") + s["input"].toString());
-            const auto ble = s["bluetooth"].toString();
-            bluetooth->setText(ble.startsWith("advertising ") ? "Bluetooth · ready" : "Bluetooth · " + ble);
-            discovery->setText("Wi-Fi discovery · " + s["mdns"].toString());
-            codeAction->setText("Pairing code: " + pin); peerAction->setText(peer->text());
-            kick->setEnabled(true); copy->setEnabled(true); kickAction->setEnabled(true);
-            tray.setToolTip("Stage Wand · " + peer->text());
+        host.setReadChannel(QProcess::StandardOutput);
+        while (host.bytesAvailable() > 0) {
+            const auto chunk = host.read(4096);
+            for (const auto byte : chunk) {
+                if (byte == '\n') {
+                    if (!discardingLine && acceptingStatus) applyStatus(pending);
+                    pending.clear(); discardingLine = false;
+                } else if (!discardingLine) {
+                    if (pending.size() < 16384) pending += byte;
+                    else { pending.clear(); discardingLine = true; }
+                }
+            }
         }
     }
-    void disconnectPhone() { host.write("k\n"); }
+    void readDiagnostics() {
+        host.setReadChannel(QProcess::StandardError);
+        while (host.bytesAvailable() > 0) {
+            diagnostics = (diagnostics + QString::fromUtf8(host.read(4096))).right(4096);
+        }
+        host.setReadChannel(QProcess::StandardOutput);
+        if (acceptingStatus) {
+            error->setText(diagnostics.trimmed()); error->setVisible(!diagnostics.trimmed().isEmpty());
+        }
+    }
+    void disconnectPhone() {
+        if (host.state() != QProcess::Running || !kick->isEnabled()) return;
+        if (host.write("k\n") != 2) {
+            diagnostics = "Cannot send the disconnect command to the host. Restart the host.";
+            host.kill(); fail(diagnostics);
+        }
+    }
 public:
     explicit Window(QString hostPath = QCoreApplication::applicationDirPath() + "/stagewand-host") : executable(std::move(hostPath)) {
         setWindowTitle("Stage Wand"); setWindowIcon(wandIcon()); resize(460, 570);
@@ -140,17 +184,23 @@ public:
             if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) showWindow();
         });
         connect(&host, &QProcess::readyReadStandardOutput, this, &Window::readStatus);
-        connect(&host, &QProcess::readyReadStandardError, this, [this] {
-            diagnostics += QString::fromUtf8(host.readAllStandardError()); diagnostics = diagnostics.right(4096);
-            error->setText(diagnostics.trimmed()); error->setVisible(!diagnostics.isEmpty());
-        });
+        connect(&host, &QProcess::readyReadStandardError, this, &Window::readDiagnostics);
         connect(&host, &QProcess::errorOccurred, this, [this](auto e) {
             if (!quitting && e == QProcess::FailedToStart) fail(host.errorString());
         });
         connect(&host, &QProcess::finished, this, [this](int status, QProcess::ExitStatus) {
-            if (!quitting) fail(QString("Host stopped (exit %1). %2").arg(status).arg(diagnostics.trimmed()));
+            if (!quitting) {
+                readDiagnostics();
+                fail(QString("Host stopped (exit %1). %2").arg(status).arg(diagnostics.trimmed()));
+            }
         });
         connect(qApp, &QApplication::aboutToQuit, this, &Window::stopHost);
+        startupDeadline.setObjectName("startupDeadline");
+        startupDeadline.setSingleShot(true); startupDeadline.setInterval(15000);
+        connect(&startupDeadline, &QTimer::timeout, this, [this] {
+            diagnostics = "Host did not report a valid status. Restart the host, or reinstall the package if the problem continues.";
+            host.kill(); fail(diagnostics);
+        });
         QTimer::singleShot(0, this, &Window::start);
     }
     ~Window() override { stopHost(); }

@@ -8,6 +8,23 @@ final class Session {
     let code = "4567"
     var port: UInt16 = 8787
     var peer: String?
+    private var authentication = AuthenticationLimiter()
+    private let ownership = PeerOwnership()
+
+    func authorize(_ candidate: String) -> Bool {
+        authentication.authorize(candidate, expected: code)
+    }
+
+    func claimPeer(id: UUID, name: String, onDisplaced: @escaping @MainActor () -> Void) {
+        ownership.claim(id: id, onDisplaced: onDisplaced)
+        peer = name
+    }
+
+    func releasePeer(id: UUID) {
+        if ownership.release(id: id) { peer = nil }
+    }
+
+    func isActivePeer(id: UUID) -> Bool { ownership.contains(id: id) }
 }
 
 @main
@@ -33,6 +50,10 @@ struct LocalSocketCheck {
         guard case .status = try JSONDecoder().decode(Reply.self, from: await socket.receive()) else {
             fatalError("Authentication failed")
         }
+        try await socket.send(JSONEncoder().encode(Command.auth(code: session.code)))
+        guard case .status = try JSONDecoder().decode(Reply.self, from: await socket.receive()) else {
+            fatalError("Reauthentication failed")
+        }
         let pendingReceive = Task { try await socket.receive() }
         // Production server pings every three seconds and expires after six without pong.
         try await Task.sleep(for: .seconds(7))
@@ -50,6 +71,6 @@ struct LocalSocketCheck {
         }
         rejected.cancel()
         withExtendedLifetime(server) {}
-        print("Local socket checks passed: scoped endpoint resolution, live production WebSocket auth, automatic heartbeat pong, send, receive cancellation, bad-code reply")
+        print("Local socket checks passed: scoped endpoint resolution, live production WebSocket auth and reauth, automatic heartbeat pong, send, receive cancellation, bad-code reply")
     }
 }

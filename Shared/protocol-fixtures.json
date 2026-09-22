@@ -1,23 +1,112 @@
 {
   "source": "Shared/Protocol.swift",
   "commands": [
-    { "t": "auth", "code": "4821" },
-    { "t": "move", "dx": 3.2, "dy": -1 },
-    { "t": "click", "b": "left" },
-    { "t": "click", "b": "right" },
-    { "t": "scroll", "dx": 0, "dy": 40 },
-    { "t": "key", "k": "esc" },
-    { "t": "key", "k": "left" },
-    { "t": "key", "k": "right" },
-    { "t": "chord", "k": "spaceRight" },
-    { "t": "chord", "k": "spaceLeft" },
-    { "t": "chord", "k": "missionControl" }
+    {
+      "t": "auth",
+      "code": "4821"
+    },
+    {
+      "t": "move",
+      "dx": 3.2,
+      "dy": -1
+    },
+    {
+      "t": "click",
+      "b": "left"
+    },
+    {
+      "t": "click",
+      "b": "right"
+    },
+    {
+      "t": "scroll",
+      "dx": 0,
+      "dy": 40
+    },
+    {
+      "t": "key",
+      "k": "esc"
+    },
+    {
+      "t": "key",
+      "k": "left"
+    },
+    {
+      "t": "key",
+      "k": "right"
+    },
+    {
+      "t": "chord",
+      "k": "spaceRight"
+    },
+    {
+      "t": "chord",
+      "k": "spaceLeft"
+    },
+    {
+      "t": "chord",
+      "k": "missionControl"
+    },
+    {
+      "t": "auth",
+      "code": ""
+    },
+    {
+      "t": "auth",
+      "code": "a\\b\"c\n日本語"
+    },
+    {
+      "t": "move",
+      "dx": -400,
+      "dy": 400
+    },
+    {
+      "t": "move",
+      "dx": 1.7976931348623157e+308,
+      "dy": -1.7976931348623157e+308
+    },
+    {
+      "t": "scroll",
+      "dx": 5e-324,
+      "dy": -1.2345678901234567e-100
+    },
+    {
+      "t": "auth",
+      "code": "value with \", : { } [ ] and slash \\"
+    },
+    {
+      "t": "auth",
+      "code": "\\u0074"
+    },
+    {
+      "t": "auth",
+      "code": "stage 🔦"
+    }
   ],
   "replies": [
-    { "t": "status" },
-    { "t": "bye", "reason": "displaced" },
-    { "t": "bye", "reason": "kicked" },
-    { "t": "bye", "reason": "badauth" }
+    {
+      "t": "status"
+    },
+    {
+      "t": "bye",
+      "reason": "displaced"
+    },
+    {
+      "t": "bye",
+      "reason": "kicked"
+    },
+    {
+      "t": "bye",
+      "reason": "badauth"
+    },
+    {
+      "t": "bye",
+      "reason": "future-reason"
+    },
+    {
+      "t": "bye",
+      "reason": ""
+    }
   ],
   "invalidCommands": [
     "{\"t\":\"move\",\"dx\":1e999,\"dy\":0}",
@@ -25,6 +114,92 @@
     "{\"t\":\"click\",\"b\":\"middle\"}",
     "{\"t\":\"key\",\"k\":\"enter\"}",
     "{\"t\":\"auth\"}",
-    "{\"dx\":1,\"dy\":2}"
+    "{\"dx\":1,\"dy\":2}",
+    "",
+    "null",
+    "true",
+    "[]",
+    "42",
+    "\"auth\"",
+    "{}",
+    "{\"t\":[]}",
+    "{\"t\":{}}",
+    "{\"t\":true}",
+    "{\"t\":\"auth\",\"code\":4821}",
+    "{\"t\":\"auth\",\"code\":null}",
+    "{\"t\":\"auth\",\"code\":{}}",
+    "{\"t\":\"auth\",\"code\":[]}",
+    "{\"t\":\"auth\",\"code\":\"4821\",\"extra\":true}",
+    "{\"t\":\"move\",\"dx\":\"1\",\"dy\":0}",
+    "{\"t\":\"move\",\"dx\":1,\"dy\":\"0\"}",
+    "{\"t\":\"move\",\"dx\":true,\"dy\":0}",
+    "{\"t\":\"move\",\"dx\":null,\"dy\":0}",
+    "{\"t\":\"move\",\"dx\":{},\"dy\":0}",
+    "{\"t\":\"move\",\"dx\":[],\"dy\":0}",
+    "{\"t\":\"move\",\"dx\":0}",
+    "{\"t\":\"move\",\"dx\":0,\"dy\":0,\"code\":\"4821\"}",
+    "{\"t\":\"scroll\",\"dx\":0,\"dy\":-1e999}",
+    "{\"t\":\"scroll\",\"dx\":NaN,\"dy\":0}",
+    "{\"t\":\"click\",\"b\":{}}",
+    "{\"t\":\"key\",\"k\":[]}",
+    "{\"t\":\"chord\",\"k\":false}",
+    "{\"t\":\"key\",\"k\":\"esc\"} {\"t\":\"key\",\"k\":\"right\"}",
+    "{\"t\":\"key\",\"k\":\"esc\"} garbage",
+    "{\"t\":\"status\"}",
+    "{\"t\":\"bye\",\"reason\":\"kicked\"}",
+    "{\"t\":\"auth\",\"t\":\"key\",\"code\":\"4821\"}",
+    "{\"t\":\"auth\",\"code\":\"4821\",\"code\":\"0000\"}",
+    "{\"t\":\"auth\",\"t\":\"auth\",\"code\":\"4821\"}",
+    "{\"t\":\"auth\",\"co\\u0064e\":\"4821\",\"code\":\"0000\"}",
+    "{\"t\":\"move\",\"dx\":0,\"dx\":1,\"dy\":0}",
+    "{\"t\":\"auth\",\"code\":\"\\ud800\"}",
+    "{\"t\":\"auth\",\"code\":\"\\udfff\"}",
+    "{\"t\":\"auth\",\"code\":\"\\ud800\\u0041\"}",
+    "{\"t\":\"move\",\"dx\":01,\"dy\":0}",
+    "{\"t\":\"move\",\"dx\":+1,\"dy\":0}",
+    "{\"t\":\"move\",\"dx\":.5,\"dy\":0}",
+    "{\"t\":\"move\",\"dx\":1.,\"dy\":0}",
+    "{\"t\":\"move\",\"dx\":0x1.0p0,\"dy\":0}",
+    "{\"t\":\"auth\",\"code\":\"line\nbreak\"}",
+    "{\"t\":\"auth\",\"code\":\"tab\tcharacter\"}",
+    "{\"t\":\"auth\",\"code\":\"nul\u0000character\"}",
+    "{t:\"auth\",\"code\":\"4821\"}",
+    "{\"t\":\"auth\",\"code\":\"4821\",}"
+  ],
+  "invalidReplies": [
+    "",
+    "null",
+    "[]",
+    "{}",
+    "{\"t\":{}}",
+    "{\"t\":[]}",
+    "{\"t\":false}",
+    "{\"t\":\"unknown\"}",
+    "{\"t\":\"status\",\"extra\":true}",
+    "{\"t\":\"bye\"}",
+    "{\"t\":\"bye\",\"reason\":null}",
+    "{\"t\":\"bye\",\"reason\":5}",
+    "{\"t\":\"bye\",\"reason\":{}}",
+    "{\"t\":\"bye\",\"reason\":[]}",
+    "{\"t\":\"bye\",\"reason\":\"kicked\",\"code\":\"1234\"}",
+    "{\"t\":\"status\"} {\"t\":\"status\"}",
+    "{\"t\":\"status\"} garbage",
+    "{\"t\":\"auth\",\"code\":\"4821\"}",
+    "{\"t\":\"status\",\"t\":\"status\"}",
+    "{\"t\":\"bye\",\"reason\":\"kicked\",\"reason\":\"displaced\"}",
+    "{\"t\":\"status\",\"\\u0074\":\"status\"}",
+    "{\"t\":\"bye\",\"reason\":\"\\ud800\"}"
+  ],
+  "bluetooth": {
+    "service": "5A3E0001-8B6C-4B1E-9F8D-2C7A1D4E6F01",
+    "command": "5A3E0002-8B6C-4B1E-9F8D-2C7A1D4E6F01",
+    "reply": "5A3E0003-8B6C-4B1E-9F8D-2C7A1D4E6F01",
+    "maxFrameBytes": 512,
+    "minimumCommandBytes": 80
+  },
+  "validCommandTexts": [
+    " \n{\"\\u0074\":\"auth\",\"code\":\"\\ud83d\\udd26\"}\t",
+    "{\"t\":\"move\",\"dx\":-0.0,\"dy\":1e-2}",
+    "{\"t\":\"auth\",\"code\":\"literal \\\\ud800\"}"
   ]
 }

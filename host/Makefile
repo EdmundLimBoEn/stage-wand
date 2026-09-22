@@ -10,7 +10,7 @@ arch-check:
 debian-check:
 	bash debian/check.sh
 deb:
-	bash debian/build.sh
+	bash debian/build.sh $(if $(OUTDIR),"$(OUTDIR)")
 
 .PHONY: desktop
 desktop: build

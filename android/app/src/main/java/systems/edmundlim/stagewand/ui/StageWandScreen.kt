@@ -67,7 +67,7 @@ fun StageWandScreen(
             if (link.state == Link.State.EnterCode) {
                 OutlinedTextField(
                     value = settings.pairingCode,
-                    onValueChange = { onSettingsChange(settings.copy(pairingCode = it.filter(Char::isDigit).take(4))) },
+                    onValueChange = { onSettingsChange(settings.copy(pairingCode = it.filter { digit -> digit in '0'..'9' }.take(4))) },
                     label = { Text("Enter host code") },
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -98,7 +98,7 @@ fun StageWandScreen(
 
 @Composable
 private fun StatusPill(link: Link) {
-    val text = when (link.state) {
+    val text = link.failureMessage ?: when (link.state) {
         Link.State.Searching -> "Searching for your host…"
         Link.State.Connecting -> "Connecting to ${link.hostName ?: "host"}…"
         Link.State.EnterCode -> "Enter code · ${link.hostName ?: "host"}"
@@ -144,7 +144,7 @@ private fun SettingsPane(settings: Settings, onChange: (Settings) -> Unit, onDon
         )
         OutlinedTextField(
             value = settings.pairingCode,
-            onValueChange = { onChange(settings.copy(pairingCode = it.filter(Char::isDigit).take(4))) },
+            onValueChange = { onChange(settings.copy(pairingCode = it.filter { digit -> digit in '0'..'9' }.take(4))) },
             label = { Text("Pairing code") },
             modifier = Modifier.fillMaxWidth()
         )
