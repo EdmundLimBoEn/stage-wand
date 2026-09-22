@@ -5,7 +5,7 @@ import Network
 @MainActor
 final class Link: ObservableObject {
     enum State: Equatable {
-        case searching, connecting(String), enterCode, authed, disconnected, localNetworkDenied
+        case searching, connecting(String), enterCode, authed, disconnected, localNetworkDenied, failed(String)
     }
     @Published var state: State = .searching
     @Published var macName: String?
@@ -57,18 +57,25 @@ final class Link: ObservableObject {
     private var code = ""
     private var host = ""
     private var transport = "bluetooth"
-    private var buffered: [Command] = []
+    private var buffered: [(command: Command, created: ContinuousClock.Instant)] = []
     private var outgoing = CommandQueue()
+    private var settingsLoaded = false
+    private var retryAttempts = 0
 
     func start() {
         discovery.onResults = { [weak self] in
-            guard let self else { return }
+            guard let self, self.host.isEmpty, self.transport == "wifi" else { return }
             if self.state == .searching || self.state == .disconnected { self.connect() }
         }
         discovery.onDenied = { [weak self] in
-            guard let self, self.host.isEmpty, self.state != .authed else { return }
+            guard let self, self.host.isEmpty, self.transport == "wifi", self.state != .authed else { return }
             self.resetConnection()
+            self.buffered.removeAll()
             self.state = .localNetworkDenied
+        }
+        discovery.onFailure = { [weak self] in
+            guard let self, self.host.isEmpty, self.transport == "wifi", self.state != .authed else { return }
+            self.disconnected()
         }
         if defaultsObserver == nil {
             defaultsObserver = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
@@ -88,22 +95,32 @@ final class Link: ObservableObject {
         case .key, .click, .chord:
             if state == .authed {
                 enqueue(command)
-            } else {
+            } else if state == .searching || state == .disconnected || isConnecting {
                 if buffered.count == 8 { buffered.removeFirst() }
-                buffered.append(command)
+                buffered.append((command, .now))
             }
         }
     }
 
+    private var isConnecting: Bool {
+        if case .connecting = state { return true }
+        return false
+    }
+
     private func refreshSettings(force: Bool = false) {
-        let newCode = UserDefaults.standard.string(forKey: "pairingCode") ?? ""
+        let newCode = (UserDefaults.standard.string(forKey: "pairingCode") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let newHost = (UserDefaults.standard.string(forKey: "manualHost") ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let newTransport = UserDefaults.standard.string(forKey: "transport") ?? "bluetooth"
-        guard force || newCode != code || newHost != host || newTransport != transport else { return }
+        let newTransport = UserDefaults.standard.string(forKey: "transport") == "wifi" ? "wifi" : "bluetooth"
+        let changed = newCode != code || newHost != host || newTransport != transport
+        guard force || changed else { return }
+        if settingsLoaded && changed { buffered.removeAll() }
+        settingsLoaded = true
         code = newCode
         host = newHost
         transport = newTransport
+        retryAttempts = 0
         resetConnection()
         state = code.isEmpty ? .enterCode : .searching
         if !code.isEmpty { connect() }
@@ -111,11 +128,19 @@ final class Link: ObservableObject {
 
     private func connect() {
         guard socket == nil else { return }
-        guard !code.isEmpty else { state = .enterCode; return }
+        guard code.utf8.count == 4, code.utf8.allSatisfy({ (48...57).contains($0) }) else {
+            state = .enterCode
+            buffered.removeAll()
+            return
+        }
         retryTask?.cancel()
         retryTask = nil
         if !host.isEmpty {
-            guard let url = ConnectionURL.parse(host) else { macName = nil; disconnected(); return }
+            guard let url = ConnectionURL.parse(host) else {
+                macName = nil
+                fail("Invalid companion address. Update it in Settings.")
+                return
+            }
             macName = url.host
             open(url)
             return
@@ -123,8 +148,13 @@ final class Link: ObservableObject {
         if transport == "bluetooth" {
             route = "Bluetooth"
             macName = nil
-            bluetooth.onName = { [weak self] in self?.macName = $0 }
-            state = .connecting("Mac")
+            let id = generation
+            bluetooth.onName = { [weak self] name in
+                guard let self, self.generation == id else { return }
+                self.macName = name
+            }
+            state = .connecting("Computer")
+            bluetooth.start()
             begin(.bluetooth(bluetooth))
             return
         }
@@ -143,7 +173,7 @@ final class Link: ObservableObject {
     }
 
     private func open(_ url: URL) {
-        state = .connecting(macName ?? url.host ?? "Mac")
+        state = .connecting(macName ?? url.host ?? "Computer")
         if url.scheme == "ws" {
             route = "Direct"
             begin(.nearby(LocalSocket(url: url)))
@@ -151,6 +181,7 @@ final class Link: ObservableObject {
         }
         route = "Secure link"
         let socket = URLSession.shared.webSocketTask(with: url)
+        socket.maximumMessageSize = 16_384
         socket.resume()
         begin(.remote(socket))
     }
@@ -165,30 +196,38 @@ final class Link: ObservableObject {
                 while !Task.isCancelled {
                     let data = try await socket.receive()
                     guard let self, self.generation == id else { return }
-                    let reply = try JSONDecoder().decode(Reply.self, from: data)
+                    let reply = try WireProtocol.decodeReply(data)
                     switch reply {
                     case .status:
                         self.timeoutTask?.cancel()
+                        self.retryAttempts = 0
                         self.state = .authed
                         let pending = self.buffered
                         self.buffered.removeAll()
-                        for command in pending { self.enqueue(command) }
+                        for item in pending where item.created.duration(to: .now) < .seconds(2) {
+                            self.enqueue(item.command)
+                        }
                     case .bye(let reason):
                         self.resetConnection()
-                        if reason == "badauth" { self.state = .enterCode }
+                        self.buffered.removeAll()
+                        if reason == "badauth" || reason == "kicked" { self.state = .enterCode }
+                        else if reason == "displaced" { self.state = .disconnected }
                         else { self.disconnected() }
                         return
                     }
                 }
             } catch {
                 guard let self, self.generation == id else { return }
-                self.disconnected()
+                self.handle(error)
             }
         }
     }
 
     private func enqueue(_ command: Command) {
-        outgoing.append(command)
+        guard outgoing.append(command) else {
+            fail("The connection is too slow to keep up. Tap to reconnect.")
+            return
+        }
         guard sendTask == nil, let socket else { return }
         let id = generation
         sendTask = Task { @MainActor [weak self] in
@@ -202,7 +241,7 @@ final class Link: ObservableObject {
                 self.sendTask = nil
             } catch {
                 guard let self, self.generation == id else { return }
-                self.disconnected()
+                self.handle(error)
             }
         }
     }
@@ -219,15 +258,39 @@ final class Link: ObservableObject {
     private func disconnected() {
         resetConnection()
         state = .disconnected
+        let delay = min(30, 1 << retryAttempts)
+        retryAttempts = min(5, retryAttempts + 1)
         retryTask = Task { @MainActor [weak self] in
-            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             self?.connect()
         }
     }
 
+    private func handle(_ error: Error) {
+        if let error = error as? BluetoothError {
+            switch error {
+            case .unavailable, .incompatible, .tooLarge:
+                fail(error.localizedDescription)
+                return
+            case .disconnected: break
+            }
+        }
+        if error is DecodingError {
+            fail("The companion sent an incompatible reply. Update both apps.")
+            return
+        }
+        disconnected()
+    }
+
+    private func fail(_ message: String) {
+        resetConnection()
+        buffered.removeAll()
+        state = .failed(message)
+    }
+
     private func resetConnection() {
         generation = UUID()
-        discovery.cancelResolution()
+        discovery.stop()
         timeoutTask?.cancel()
         retryTask?.cancel()
         receiveTask?.cancel()

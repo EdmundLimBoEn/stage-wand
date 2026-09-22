@@ -46,6 +46,7 @@ type Server struct {
 	http      *http.Server
 	listener  net.Listener
 	moves     int
+	closed    bool
 }
 
 type peer struct {
@@ -84,7 +85,6 @@ func New(session *Session, cfg Config, onCommand func(protocol.Command)) *Server
 		onCommand: onCommand,
 		peers:     map[*peer]struct{}{},
 		upgrader: websocket.Upgrader{
-			CheckOrigin:       func(*http.Request) bool { return true },
 			EnableCompression: false,
 			HandshakeTimeout:  5 * time.Second,
 		},
@@ -121,16 +121,18 @@ type errString string
 func (e errString) Error() string { return string(e) }
 
 func (s *Server) Close() error {
-	s.Kick()
 	s.mu.Lock()
-	for p := range s.peers {
-		p.conn.Close()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
 	}
+	s.closed = true
 	s.mu.Unlock()
 	var err error
 	if s.http != nil {
 		err = s.http.Close()
 	}
+	s.Kick()
 	return err
 }
 
@@ -147,6 +149,13 @@ func (s *Server) Kick() {
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	unavailable := s.closed || len(s.peers) >= 64
+	s.mu.Unlock()
+	if unavailable {
+		http.Error(w, "Stage Wand is busy", http.StatusServiceUnavailable)
+		return
+	}
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -169,6 +178,11 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	s.mu.Lock()
+	if s.closed || len(s.peers) >= 64 {
+		s.mu.Unlock()
+		conn.Close()
+		return
+	}
 	s.peers[p] = struct{}{}
 	s.mu.Unlock()
 	go s.read(p)
@@ -225,6 +239,15 @@ func (s *Server) read(p *peer) {
 		}
 		switch v := command.(type) {
 		case protocol.Auth:
+			accepted, revoke := s.session.Claim(v.Code, p.owner)
+			if !accepted {
+				s.closePeer(p, protocol.ReasonBadAuth)
+				return
+			}
+			revoke()
+			if err := p.write(protocol.Status{}); err != nil {
+				return
+			}
 			continue
 		case protocol.Move:
 			if !protocol.MoveInRange(v.Dx, v.Dy) {
@@ -240,6 +263,9 @@ func (s *Server) read(p *peer) {
 			}
 			s.session.Dispatch(p.owner, func() { s.onCommand(v) })
 		case protocol.Scroll:
+			if !protocol.MoveInRange(v.Dx, v.Dy) {
+				continue
+			}
 			s.session.Dispatch(p.owner, func() { s.onCommand(v) })
 		default:
 			s.session.Dispatch(p.owner, func() { s.onCommand(command) })

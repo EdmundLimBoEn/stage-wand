@@ -5,11 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"strings"
+	"unicode/utf8"
 )
 
 const MaxAbsMove = 400
+
+// MaxFrameBytes is the maximum attribute value carried by one BLE write.
+const MaxFrameBytes = 512
+
+// MinimumCommandBytes accommodates canonical finite-double movement frames.
+const MinimumCommandBytes = 80
 
 var (
 	ErrInvalidFrame = errors.New("invalid frame")
@@ -25,12 +33,12 @@ type Scroll struct{ Dx, Dy float64 }
 type KeyPress struct{ Key Key }
 type ChordPress struct{ Chord Chord }
 
-func (Auth) command()        {}
-func (Move) command()        {}
-func (Click) command()       {}
-func (Scroll) command()      {}
-func (KeyPress) command()    {}
-func (ChordPress) command()  {}
+func (Auth) command()       {}
+func (Move) command()       {}
+func (Click) command()      {}
+func (Scroll) command()     {}
+func (KeyPress) command()   {}
+func (ChordPress) command() {}
 
 type Button string
 type Key string
@@ -62,13 +70,18 @@ const (
 )
 
 func ParseCommand(data []byte) (Command, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	var raw map[string]any
-	if err := dec.Decode(&raw); err != nil {
-		return nil, ErrInvalidFrame
+	raw, err := parseObject(data)
+	if err != nil {
+		return nil, err
 	}
 	t, _ := raw["t"].(string)
+	fields := map[string][]string{
+		"auth": {"t", "code"}, "move": {"t", "dx", "dy"}, "scroll": {"t", "dx", "dy"},
+		"click": {"t", "b"}, "key": {"t", "k"}, "chord": {"t", "k"},
+	}
+	if !hasFields(raw, fields[t]) {
+		return nil, ErrInvalidFrame
+	}
 	switch t {
 	case "auth":
 		code, ok := raw["code"].(string)
@@ -113,13 +126,15 @@ func ParseCommand(data []byte) (Command, error) {
 }
 
 func ParseReply(data []byte) (Reply, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	var raw map[string]any
-	if err := dec.Decode(&raw); err != nil {
-		return nil, ErrInvalidFrame
+	raw, err := parseObject(data)
+	if err != nil {
+		return nil, err
 	}
 	t, _ := raw["t"].(string)
+	fields := map[string][]string{"status": {"t"}, "bye": {"t", "reason"}}
+	if !hasFields(raw, fields[t]) {
+		return nil, ErrInvalidFrame
+	}
 	switch t {
 	case "status":
 		return Status{}, nil
@@ -137,6 +152,9 @@ func ParseReply(data []byte) (Reply, error) {
 func EncodeCommand(command Command) ([]byte, error) {
 	switch v := command.(type) {
 	case Auth:
+		if !utf8.ValidString(v.Code) {
+			return nil, ErrInvalidFrame
+		}
 		return json.Marshal(struct {
 			T    string `json:"t"`
 			Code string `json:"code"`
@@ -160,16 +178,25 @@ func EncodeCommand(command Command) ([]byte, error) {
 			Dy float64 `json:"dy"`
 		}{"scroll", v.Dx, v.Dy})
 	case Click:
+		if v.Button != ButtonLeft && v.Button != ButtonRight {
+			return nil, ErrInvalidFrame
+		}
 		return json.Marshal(struct {
 			T string `json:"t"`
 			B string `json:"b"`
 		}{"click", string(v.Button)})
 	case KeyPress:
+		if v.Key != KeyLeft && v.Key != KeyRight && v.Key != KeyEsc {
+			return nil, ErrInvalidFrame
+		}
 		return json.Marshal(struct {
 			T string `json:"t"`
 			K string `json:"k"`
 		}{"key", string(v.Key)})
 	case ChordPress:
+		if v.Chord != SpaceLeft && v.Chord != SpaceRight && v.Chord != MissionCtrl {
+			return nil, ErrInvalidFrame
+		}
 		return json.Marshal(struct {
 			T string `json:"t"`
 			K string `json:"k"`
@@ -186,6 +213,9 @@ func EncodeReply(reply Reply) ([]byte, error) {
 			T string `json:"t"`
 		}{"status"})
 	case Bye:
+		if !utf8.ValidString(v.Reason) {
+			return nil, ErrInvalidFrame
+		}
 		return json.Marshal(struct {
 			T      string `json:"t"`
 			Reason string `json:"reason"`
@@ -220,4 +250,113 @@ func finite(dx, dy float64) error {
 		return ErrNonfinite
 	}
 	return nil
+}
+
+func parseObject(data []byte) (map[string]any, error) {
+	if !utf8.Valid(data) || !validUnicodeEscapes(data) {
+		return nil, ErrInvalidFrame
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	opening, err := dec.Token()
+	if err != nil || opening != json.Delim('{') {
+		return nil, ErrInvalidFrame
+	}
+	raw := make(map[string]any)
+	for dec.More() {
+		token, err := dec.Token()
+		if err != nil {
+			return nil, ErrInvalidFrame
+		}
+		key, ok := token.(string)
+		if _, duplicate := raw[key]; !ok || duplicate {
+			return nil, ErrInvalidFrame
+		}
+		var value any
+		if err := dec.Decode(&value); err != nil {
+			return nil, ErrInvalidFrame
+		}
+		raw[key] = value
+	}
+	if closing, err := dec.Token(); err != nil || closing != json.Delim('}') {
+		return nil, ErrInvalidFrame
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return nil, ErrInvalidFrame
+	}
+	return raw, nil
+}
+
+func hasFields(raw map[string]any, fields []string) bool {
+	if len(fields) == 0 || len(raw) != len(fields) {
+		return false
+	}
+	for _, field := range fields {
+		if _, ok := raw[field]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// encoding/json replaces isolated UTF-16 surrogates; Swift rejects them.
+func validUnicodeEscapes(data []byte) bool {
+	quoted := false
+	for i := 0; i < len(data); i++ {
+		if data[i] == '"' {
+			quoted = !quoted
+			continue
+		}
+		if !quoted || data[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(data) {
+			return false
+		}
+		if data[i] != 'u' {
+			continue
+		}
+		value, ok := unicodeEscape(data[i:])
+		if !ok {
+			return false
+		}
+		i += 4
+		if value >= 0xdc00 && value <= 0xdfff {
+			return false
+		}
+		if value >= 0xd800 && value <= 0xdbff {
+			if i+2 >= len(data) || data[i+1] != '\\' {
+				return false
+			}
+			low, ok := unicodeEscape(data[i+2:])
+			if !ok || low < 0xdc00 || low > 0xdfff {
+				return false
+			}
+			i += 6
+		}
+	}
+	return true
+}
+
+func unicodeEscape(data []byte) (uint16, bool) {
+	if len(data) < 5 || data[0] != 'u' {
+		return 0, false
+	}
+	var value uint16
+	for _, digit := range data[1:5] {
+		value <<= 4
+		switch {
+		case digit >= '0' && digit <= '9':
+			value |= uint16(digit - '0')
+		case digit >= 'a' && digit <= 'f':
+			value |= uint16(digit - 'a' + 10)
+		case digit >= 'A' && digit <= 'F':
+			value |= uint16(digit - 'A' + 10)
+		default:
+			return 0, false
+		}
+	}
+	return value, true
 }

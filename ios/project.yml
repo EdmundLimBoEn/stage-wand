@@ -28,9 +28,9 @@ targets:
           - CFBundleURLName: systems.edmundlim.stagewand
             CFBundleURLSchemes: [stagewand]
         UILaunchScreen: {}
-        UIBackgroundModes: [audio]
-        NSLocalNetworkUsageDescription: Connect to your Mac to control presentations and the pointer.
-        NSBluetoothAlwaysUsageDescription: Connect directly to your Mac over Bluetooth for low-latency pointer control.
+        UIBackgroundModes: [audio, bluetooth-central]
+        NSLocalNetworkUsageDescription: Connect to your computer to control presentations and the pointer.
+        NSBluetoothAlwaysUsageDescription: Connect directly to your computer over Bluetooth for low-latency pointer control.
         NSBonjourServices: [_stagewand._tcp]
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

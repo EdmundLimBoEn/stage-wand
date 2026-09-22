@@ -13,6 +13,7 @@ final class LocalSocket {
         parameters.requiredInterface = interface
         let websocket = NWProtocolWebSocket.Options()
         websocket.autoReplyPing = true
+        websocket.maximumMessageSize = 16_384
         parameters.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
         connection = NWConnection(to: .url(url), using: parameters)
         connection.start(queue: .main)
@@ -42,13 +43,15 @@ final class LocalSocket {
             while true {
                 try Task.checkCancellation()
                 let data: Data? = try await withCheckedThrowingContinuation { continuation in
-                    connection.receiveMessage { data, context, _, error in
+                    connection.receiveMessage { data, context, isComplete, error in
                         if let error { continuation.resume(throwing: error); return }
                         let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
                         if metadata?.opcode == .close {
                             continuation.resume(throwing: CancellationError())
                         } else if metadata?.opcode == .text || metadata?.opcode == .binary {
                             continuation.resume(returning: data ?? Data())
+                        } else if isComplete && data == nil && metadata == nil {
+                            continuation.resume(throwing: CancellationError())
                         } else {
                             continuation.resume(returning: nil)
                         }

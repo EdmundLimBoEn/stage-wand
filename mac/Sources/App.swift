@@ -183,6 +183,11 @@ private struct PairingDetails: View {
             .foregroundStyle(session.axGranted ? Color.green : Color.red)
         Text(session.peer.map { "Connected: \($0)" } ?? "Waiting for phone")
             .foregroundStyle(.secondary)
+        if let error = session.bluetoothError {
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
         if let error = session.startupError {
             Text("Server unavailable: \(error)")
                 .font(.caption)

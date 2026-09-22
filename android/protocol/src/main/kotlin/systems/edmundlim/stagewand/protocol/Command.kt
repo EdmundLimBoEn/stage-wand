@@ -7,12 +7,12 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.math.abs
 
 private const val maxAbsMove = 400.0
-private val json = Json { ignoreUnknownKeys = true }
+private val json = Json
+private val jsonNumber = Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?")
 
 sealed class Command {
     data class Auth(val code: String) : Command()
@@ -40,6 +40,14 @@ sealed class Command {
     companion object {
         fun decode(text: String): Command? {
             val obj = parseObject(text) ?: return null
+            val fields = when (obj.string("t")) {
+                "auth" -> setOf("t", "code")
+                "move", "scroll" -> setOf("t", "dx", "dy")
+                "click" -> setOf("t", "b")
+                "key", "chord" -> setOf("t", "k")
+                else -> return null
+            }
+            if (obj.keys != fields) return null
             return when (obj.string("t")) {
                 "auth" -> obj.string("code")?.let(::Auth)
                 "move", "scroll" -> {
@@ -89,6 +97,12 @@ sealed class Reply {
     companion object {
         fun decode(text: String): Reply? {
             val obj = parseObject(text) ?: return null
+            val fields = when (obj.string("t")) {
+                "status" -> setOf("t")
+                "bye" -> setOf("t", "reason")
+                else -> return null
+            }
+            if (obj.keys != fields) return null
             return when (obj.string("t")) {
                 "status" -> Status
                 "bye" -> obj.string("reason")?.let(::Bye)
@@ -100,14 +114,49 @@ sealed class Reply {
 
 fun moveInRange(dx: Double, dy: Double): Boolean = abs(dx) <= maxAbsMove && abs(dy) <= maxAbsMove
 
-private fun parseObject(text: String): JsonObject? =
-    runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
+private fun parseObject(text: String): JsonObject? = runCatching {
+    if (!hasUniqueKeys(text)) return null
+    json.parseToJsonElement(text).jsonObject
+}.getOrNull()
+
+// JsonObject collapses repeated keys; inspect the original key tokens first.
+private fun hasUniqueKeys(text: String): Boolean {
+    var index = 0
+    var depth = 0
+    var expectingKey = true
+    val keys = mutableSetOf<String>()
+    while (index < text.length) {
+        when (text[index]) {
+            '"' -> {
+                val start = index++
+                while (index < text.length) {
+                    if (text[index] == '\\') { index += 2; continue }
+                    if (text[index] == '"') break
+                    if (text[index] < ' ') return false
+                    index++
+                }
+                if (index >= text.length) return false
+                if (depth == 1 && expectingKey) {
+                    val key = (json.parseToJsonElement(text.substring(start, index + 1)) as JsonPrimitive).content
+                    if (!keys.add(key)) return false
+                }
+            }
+            '{', '[' -> depth++
+            '}', ']' -> depth--
+            ',' -> if (depth == 1) expectingKey = true
+            ':' -> if (depth == 1) expectingKey = false
+        }
+        index++
+    }
+    return true
+}
 
 private fun JsonObject.string(key: String): String? =
-    this[key]?.jsonPrimitive?.contentOrNull
+    (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.takeIf(::validUnicode)
 
 private fun JsonObject.finite(key: String): Double? {
-    val primitive = this[key]?.jsonPrimitive ?: return null
+    val primitive = this[key] as? JsonPrimitive ?: return null
+    if (primitive.isString || !jsonNumber.matches(primitive.content)) return null
     val value = primitive.doubleOrNull ?: return null
     return value.takeIf { it.isFinite() }
 }
@@ -115,10 +164,24 @@ private fun JsonObject.finite(key: String): Double? {
 private fun obj(vararg pairs: Pair<String, Any>): String = buildJsonObject {
     for ((key, value) in pairs) {
         when (value) {
-            is String -> put(key, value)
+            is String -> {
+                require(validUnicode(value)) { "invalid Unicode" }
+                put(key, value)
+            }
             is Double -> put(key, value)
             is Number -> put(key, value.toDouble())
             else -> put(key, JsonPrimitive(value.toString()))
         }
     }
 }.toString()
+
+private fun validUnicode(text: String): Boolean {
+    var index = 0
+    while (index < text.length) {
+        val character = text[index++]
+        if (character.isHighSurrogate()) {
+            if (index == text.length || !text[index++].isLowSurrogate()) return false
+        } else if (character.isLowSurrogate()) return false
+    }
+    return true
+}

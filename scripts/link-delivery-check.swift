@@ -5,6 +5,23 @@ final class Session {
     let code = "4567"
     var port: UInt16 = 8787
     var peer: String?
+    private var authentication = AuthenticationLimiter()
+    private let ownership = PeerOwnership()
+
+    func authorize(_ candidate: String) -> Bool {
+        authentication.authorize(candidate, expected: code)
+    }
+
+    func claimPeer(id: UUID, name: String, onDisplaced: @escaping @MainActor () -> Void) {
+        ownership.claim(id: id, onDisplaced: onDisplaced)
+        peer = name
+    }
+
+    func releasePeer(id: UUID) {
+        if ownership.release(id: id) { peer = nil }
+    }
+
+    func isActivePeer(id: UUID) -> Bool { ownership.contains(id: id) }
 }
 
 @MainActor
@@ -57,7 +74,33 @@ struct LinkDeliveryCheck {
         guard case .click(.left) = commands[13], case .move(let x, let y) = commands[14],
               case .scroll(let sx, let sy) = commands[15] else { fatalError("Barriers reordered") }
         precondition(x == 12 && y == 34 && sx == 5 && sy == 6)
+
+        let replacement = LocalSocket(url: URL(string: "ws://127.0.0.1:\(port)")!)
+        try await replacement.send(JSONEncoder().encode(Command.auth(code: session.code)))
+        guard case .status = try JSONDecoder().decode(Reply.self, from: await replacement.receive()) else {
+            fatalError("Replacement controller failed to authenticate")
+        }
+        try await Task.sleep(for: .milliseconds(2200))
+        precondition(link.state == .disconnected, "Displaced controller must not reconnect and fight the replacement")
+        link.send(.key(.left))
+        defaults.set("9999", forKey: "pairingCode")
+        link.start()
+        for _ in 0..<100 {
+            if link.state == .enterCode { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        precondition(link.state == .enterCode)
+        replacement.cancel()
+        defaults.set(session.code, forKey: "pairingCode")
+        link.start()
+        for _ in 0..<100 {
+            if link.state == .authed { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        precondition(link.state == .authed)
+        try await Task.sleep(for: .milliseconds(100))
+        precondition(recorder.read().count == commands.count, "Changing credentials must discard buffered input")
         withExtendedLifetime(server) {}
-        print("Link delivery checks passed: native direct auth, 8 buffered keys, 1000 deltas coalesced into 5 legal frames, exact distance and click/scroll order")
+        print("Link delivery checks passed: native direct auth, bounded buffered keys, exact movement and ordering, displaced-client reconnect suppression, credential-change input clearing")
     }
 }

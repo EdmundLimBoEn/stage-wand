@@ -44,19 +44,19 @@ struct SettingsView: View {
                     TextField("Pairing code", text: $pairingCode)
                         .keyboardType(.numberPad)
                         .textContentType(.oneTimeCode)
-                    TextField("Mac address or tunnel URL", text: $manualHost)
+                    TextField("Computer address or tunnel URL", text: $manualHost)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     if !manualHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                        ConnectionURL.parse(manualHost) == nil {
-                        Text("Enter a valid Mac address or ws, wss, http or https URL without a username, password or fragment.")
+                        Text("Enter a valid computer address or ws, wss, http or https URL without a username, password or fragment.")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
                 }
                 Section {
-                    Text("Find the pairing code in the Stage Wand menu on your Mac. Paste a tunnel URL when the network blocks local connections, or enter a local host:port. Leave the address empty for automatic discovery.")
+                    Text("Find the pairing code in Stage Wand on your computer. Paste a tunnel URL when the network blocks local connections, or enter a local host:port. Leave the address empty for automatic discovery. After five failed pairing attempts, wait 30 seconds or refresh the code on your computer.")
                 }
             }
             .navigationTitle("Settings")

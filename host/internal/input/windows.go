@@ -4,6 +4,9 @@ package input
 
 import (
 	"fmt"
+	"os"
+	"sync"
+	"syscall"
 	"unsafe"
 
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/protocol"
@@ -28,6 +31,9 @@ const (
 	vkControl      = 0x11
 	vkLWin         = 0x5B
 	vkTab          = 0x09
+	buttonLeft     = 0x100
+	buttonRight    = 0x101
+	keyExtended    = 0x0001
 )
 
 var (
@@ -57,63 +63,97 @@ type inputRecord struct {
 	Data mouseData
 }
 
-type SendInputInjector struct{}
+type SendInputInjector struct {
+	mu        sync.Mutex
+	keys      keyState
+	closed    bool
+	lastErr   error
+	sendEvent func(inputRecord) error
+}
 
 func Diagnose() Probe {
 	return Probe{Device: "SendInput", Exists: true, Writable: true, Hint: "SendInput ready"}
 }
 
 func Open() (Injector, error) {
-	return SendInputInjector{}, nil
+	return &SendInputInjector{}, nil
 }
 
 func OpenOrError() (Injector, error) { return Open() }
 
-func (SendInputInjector) Ready() (bool, string) { return true, "SendInput ready" }
-func (SendInputInjector) Close() error          { return nil }
+func (s *SendInputInjector) Ready() (bool, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false, "input device closed"
+	}
+	if s.lastErr != nil {
+		return false, s.lastErr.Error()
+	}
+	return true, "SendInput ready"
+}
 
-func (SendInputInjector) Apply(command protocol.Command) error {
-	switch v := command.(type) {
-	case protocol.Auth:
+func (s *SendInputInjector) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.keys.release(s.emitKey)
+	s.closed = true
+	return err
+}
+
+func (s *SendInputInjector) Apply(command protocol.Command) (err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return os.ErrClosed
+	}
+	if _, ok := command.(protocol.Auth); ok {
 		return nil
+	}
+	defer func() {
+		if err != nil {
+			s.lastErr = err
+		}
+	}()
+	if err := s.keys.release(s.emitKey); err != nil {
+		return err
+	}
+	switch v := command.(type) {
 	case protocol.Move:
 		dx, dy := relative(v.Dx, v.Dy)
 		if dx == 0 && dy == 0 {
 			return nil
 		}
-		return sendMouse(dx, dy, 0, mouseMove)
+		return s.sendMouse(dx, dy, 0, mouseMove)
 	case protocol.Click:
-		down, up := uint32(mouseLeftDown), uint32(mouseLeftUp)
+		button := uint16(buttonLeft)
 		if v.Button == protocol.ButtonRight {
-			down, up = mouseRightDown, mouseRightUp
+			button = buttonRight
 		}
-		if err := sendMouse(0, 0, 0, down); err != nil {
-			return err
-		}
-		return sendMouse(0, 0, 0, up)
+		return s.keys.tap([]uint16{button}, s.emitKey)
 	case protocol.Scroll:
 		dx, dy := relative(v.Dx, v.Dy)
 		if dy != 0 {
-			if err := sendMouse(0, 0, uint32(dy), mouseWheel); err != nil {
+			if err := s.sendMouse(0, 0, uint32(dy), mouseWheel); err != nil {
 				return err
 			}
 		}
 		if dx != 0 {
-			if err := sendMouse(0, 0, uint32(dx), mouseHWheel); err != nil {
+			if err := s.sendMouse(0, 0, uint32(dx), mouseHWheel); err != nil {
 				return err
 			}
 		}
 		return nil
 	case protocol.KeyPress:
-		return tap(virtualKey(v.Key))
+		return s.keys.tap([]uint16{virtualKey(v.Key)}, s.emitKey)
 	case protocol.ChordPress:
 		switch v.Chord {
 		case protocol.SpaceLeft:
-			return chord([]uint16{vkLWin, vkControl, vkLeft})
+			return s.keys.tap([]uint16{vkLWin, vkControl, vkLeft}, s.emitKey)
 		case protocol.SpaceRight:
-			return chord([]uint16{vkLWin, vkControl, vkRight})
+			return s.keys.tap([]uint16{vkLWin, vkControl, vkRight}, s.emitKey)
 		case protocol.MissionCtrl:
-			return chord([]uint16{vkLWin, vkTab})
+			return s.keys.tap([]uint16{vkLWin, vkTab}, s.emitKey)
 		}
 	}
 	return nil
@@ -130,43 +170,50 @@ func virtualKey(key protocol.Key) uint16 {
 	}
 }
 
-func tap(vk uint16) error {
-	if err := sendKey(vk, 0); err != nil {
-		return err
-	}
-	return sendKey(vk, keyUp)
-}
-
-func chord(keys []uint16) error {
-	for _, key := range keys {
-		if err := sendKey(key, 0); err != nil {
-			return err
-		}
-	}
-	for i := len(keys) - 1; i >= 0; i-- {
-		if err := sendKey(keys[i], keyUp); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func sendMouse(dx, dy int32, data, flags uint32) error {
+func (s *SendInputInjector) sendMouse(dx, dy int32, data, flags uint32) error {
 	in := inputRecord{Type: inputMouse, Data: mouseData{Dx: dx, Dy: dy, MouseData: data, Flags: flags}}
-	return send(unsafe.Pointer(&in), unsafe.Sizeof(in))
+	return s.send(in)
 }
 
-func sendKey(vk uint16, flags uint32) error {
+func (s *SendInputInjector) emitKey(vk uint16, down bool) error {
+	if vk == buttonLeft || vk == buttonRight {
+		downFlag, upFlag := uint32(mouseLeftDown), uint32(mouseLeftUp)
+		if vk == buttonRight {
+			downFlag, upFlag = mouseRightDown, mouseRightUp
+		}
+		if down {
+			return s.sendMouse(0, 0, 0, downFlag)
+		}
+		return s.sendMouse(0, 0, 0, upFlag)
+	}
+	var flags uint32
+	if !down {
+		flags |= keyUp
+	}
+	if vk == vkLeft || vk == vkRight || vk == vkUp || vk == vkLWin {
+		flags |= keyExtended
+	}
 	in := inputRecord{Type: inputKeyboard}
 	// INPUT always reserves its full union, even for the smaller KEYBDINPUT member.
 	*(*keyboardData)(unsafe.Pointer(&in.Data)) = keyboardData{Vk: vk, Flags: flags}
-	return send(unsafe.Pointer(&in), unsafe.Sizeof(in))
+	return s.send(in)
 }
 
-func send(p unsafe.Pointer, size uintptr) error {
-	n, _, err := procSendInput.Call(1, uintptr(p), size)
+func (s *SendInputInjector) send(in inputRecord) (err error) {
+	defer func() {
+		if err == nil {
+			s.lastErr = nil
+		}
+	}()
+	if s.sendEvent != nil {
+		return s.sendEvent(in)
+	}
+	n, _, err := procSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
 	if n == 0 {
-		return fmt.Errorf("SendInput: %v", err)
+		if err != nil && err != syscall.Errno(0) {
+			return fmt.Errorf("SendInput: %w", err)
+		}
+		return fmt.Errorf("SendInput was blocked; input cannot control an elevated application or the secure desktop")
 	}
 	return nil
 }

@@ -8,8 +8,7 @@ class CommandWriter(private val write: (Command) -> Boolean) {
     val needsRetry: Boolean get() = pending != null && !inFlight
 
     fun enqueue(command: Command): Boolean {
-        queue.append(command)
-        if (count > 64) {
+        if (!queue.append(command) || count > 64) {
             clear()
             return false
         }

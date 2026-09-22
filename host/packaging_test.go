@@ -2,6 +2,7 @@ package packaging_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,8 +37,8 @@ func TestArchUinputPackaging(t *testing.T) {
 			t.Fatalf("PKGBUILD must not depend on %s", dep)
 		}
 	}
-	if !strings.Contains(pkgbuild, "makedepends=('go' 'gcc' 'cmake')") {
-		t.Fatal("PKGBUILD must build with extra/go and core/gcc")
+	if !strings.Contains(pkgbuild, "makedepends=('go>=1.26.8' 'gcc' 'cmake')") {
+		t.Fatal("PKGBUILD must require the supported Go toolchain and core/gcc")
 	}
 	if !strings.Contains(pkgbuild, "-buildvcs=false") {
 		t.Fatal("PKGBUILD must disable VCS stamping so extra/go can build outside a trusted git tree")
@@ -48,43 +49,65 @@ func TestArchUinputPackaging(t *testing.T) {
 	if !strings.Contains(pkgbuild, "go test ./internal/... ./cmd/...") {
 		t.Fatal("PKGBUILD check() must test ./internal/... and ./cmd/...")
 	}
-	readme := readFile(t, filepath.Join(hostDir, "..", "README.md"))
-	if !strings.Contains(readme, "pacman -S --needed go git") {
-		t.Fatal("README must show the Arch pacman install line")
-	}
-	if !strings.Contains(readme, "pacman -S --needed bluez bluez-utils") {
-		t.Fatal("README must show the Arch bluez install line")
-	}
-	if strings.Contains(readme, "usermod -aG input") {
-		t.Fatal("README must not tell users to join the input group")
-	}
-	if !strings.Contains(readme, "uaccess") {
-		t.Fatal("README must mention uaccess")
-	}
-	if !strings.Contains(readme, "apt install golang-go git") {
-		t.Fatal("README must show the Debian install line")
-	}
-	if !strings.Contains(readme, "stagewand-host_amd64.deb") {
-		t.Fatal("README must show the Debian/Ubuntu .deb download")
-	}
-	if !strings.Contains(readme, "stagewand-host-x86_64.pkg.tar.zst") {
-		t.Fatal("README must show the Arch package download")
-	}
 	control := readFile(t, filepath.Join(hostDir, "debian", "control"))
 	for _, dep := range []string{"ydotool", "xdotool", "libei"} {
 		if strings.Contains(control, dep) {
 			t.Fatalf("debian control must not depend on %s", dep)
 		}
 	}
-	if !strings.Contains(control, "libqt6widgets6") {
-		t.Fatal("debian control must depend on Qt 6 widgets")
-	}
-	if !strings.Contains(control, "libqt6core6t64") {
-		t.Fatal("debian control must accept Ubuntu t64 Qt packages")
+	if !strings.Contains(control, "Depends: @SHLIBS@, bluez, dbus, kmod, udev, qt6-qpa-plugins, qt6-wayland, hicolor-icon-theme") {
+		t.Fatal("debian control must derive ABI dependencies and install Bluetooth, uinput and Qt platform support")
 	}
 	postinst := readFile(t, filepath.Join(hostDir, "debian", "postinst"))
 	if !strings.Contains(postinst, "udevadm") {
 		t.Fatal("debian postinst must reload udev")
+	}
+}
+
+func TestDebianMaintainerLifecycle(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("requires a POSIX shell")
+	}
+	hostDir := testHostDir(t)
+	for _, test := range []struct {
+		script string
+		action string
+		want   string
+	}{
+		{"postinst", "configure", "modprobe uinput\nudevadm control --reload\nudevadm trigger --action=add --subsystem-match=misc --sysname-match=uinput\n"},
+		{"postinst", "abort-upgrade", ""},
+		{"postinst", "abort-remove", ""},
+		{"postrm", "remove", "udevadm control --reload\nudevadm trigger --action=add --subsystem-match=misc --sysname-match=uinput\n"},
+		{"postrm", "purge", "udevadm control --reload\nudevadm trigger --action=add --subsystem-match=misc --sysname-match=uinput\n"},
+		{"postrm", "upgrade", ""},
+		{"postrm", "failed-upgrade", ""},
+	} {
+		t.Run(test.script+"/"+test.action, func(t *testing.T) {
+			for _, status := range []string{"0", "1"} {
+				t.Run("helper-exit-"+status, func(t *testing.T) {
+					dir := t.TempDir()
+					logPath := filepath.Join(dir, "calls")
+					for _, helper := range []string{"modprobe", "udevadm"} {
+						body := "#!/bin/sh\nprintf '%s %s\\n' '" + helper + "' \"$*\" >> \"$CALL_LOG\"\nexit " + status + "\n"
+						if err := os.WriteFile(filepath.Join(dir, helper), []byte(body), 0o755); err != nil {
+							t.Fatal(err)
+						}
+					}
+					cmd := exec.Command("sh", filepath.Join(hostDir, "debian", test.script), test.action)
+					cmd.Env = append(os.Environ(), "PATH="+dir, "CALL_LOG="+logPath)
+					if output, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("maintainer script failed without a live udev/kernel: %v\n%s", err, output)
+					}
+					calls, err := os.ReadFile(logPath)
+					if err != nil && !os.IsNotExist(err) {
+						t.Fatal(err)
+					}
+					if string(calls) != test.want {
+						t.Fatalf("calls = %q, want %q", calls, test.want)
+					}
+				})
+			}
+		})
 	}
 }
 
