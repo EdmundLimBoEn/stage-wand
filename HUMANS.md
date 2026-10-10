@@ -2,6 +2,30 @@
 
 Physical setup and acceptance checks for Stage Wand. Start with [README.md](README.md); leave checks unticked until verified on the actual devices.
 
+## Release acceptance after the robustness changes
+
+Automated checks and container package tests do not exercise phone radios, a graphical input seat, or Windows/macOS native runtime behavior. The Arch confirmations below describe the earlier build, not an acceptance of these changes.
+
+For each row, test **both iPhone and Android**, over **Bluetooth and Wi-Fi**: pairing (including a leading-zero code), NEXT/PREV/Esc, left/right click, small/large scroll, 60 seconds of pointer movement, and desktop-switching chords. Record the device, OS, adapter, build, and results before ticking.
+
+- [ ] Arch Linux: repeat the previously working iPhone path and verify Android, using the new packaged host.
+- [ ] Debian: install the new `.deb` in a graphical session; test BlueZ, uinput after a fresh login/reboot, and the controls above.
+- [ ] Ubuntu: repeat the `.deb` checks on the oldest supported Ubuntu 22.04 baseline and a current supported desktop.
+- [ ] macOS: native build/signing and Accessibility/Bluetooth permissions, then both remotes and transports.
+- [ ] Windows: execute native WinRT and SendInput tests/build on Windows, verify both remotes and transports, and firewall/virtual-desktop behavior.
+- [ ] Every host: wrong code, five wrong attempts followed by the 30-second cooldown, Disconnect & new code, and successful recovery using the new code.
+- [ ] Every host: rapid Bluetooth/Wi-Fi handover between two phones; only the newest authenticated controller can inject. On Linux, second subscribers can see characteristic-wide notifications; ensure a rejected phone disconnects instead of remaining falsely connected.
+- [ ] Every Bluetooth pair: disable/re-enable the radio, walk out of range/back, suspend/wake the host, and lock/unlock the phone. Confirm recovery and that no stale key/click is replayed.
+- [ ] Linux: restart BlueZ while paired and confirm the host reports the interruption and advertises again. Restart the app if the system D-Bus itself was lost.
+- [ ] Windows: launch with Bluetooth disabled, enable it, and relaunch if the initial provider setup was unavailable. Test recovery from radio loss after a successful startup.
+- [ ] Both phones: locked-screen hardware volume keys for a full rehearsal. Android OEM background restrictions and iOS audio interruptions still need physical testing.
+- [ ] Release gates: run native macOS/iOS and Windows CI for this exact revision; simulator/fake-radio tests do not certify hardware interoperability.
+- [ ] Distribution: provide release signing/provisioning for the phone apps and choose a distribution license before a public packaged release. Android release builds currently produce an unsigned APK; do not distribute a debug build as a signed release.
+
+See [the release verification record](docs/release-readiness.md) for automated evidence and remaining limits.
+
+## Earlier setup and acceptance history
+
 - [x] Approve `docs/DESIGN.md` and `PLAN.md` before Wave 0 starts
 - [x] Generate the iOS project, use the selected team `DUU8J39BA7`, build, install, and launch on the connected iPhone 17 Pro via Xcode tools.
 - [ ] Allow Local Network or developer-trust prompts if shown.

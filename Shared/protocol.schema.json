@@ -2,69 +2,148 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://edmundlim.systems/stagewand/protocol.schema.json",
   "title": "Stage Wand wire frames",
-  "description": "JSON text frames for the LAN WebSocket protocol. Shared/Protocol.swift is the source of truth. This schema documents the frozen t discriminator.",
+  "description": "One complete UTF-8 JSON object per WebSocket text message or BLE ATT value. Shared/Protocol.swift is the source of truth. Field names and primitive types are strict. BLE has no fragmentation: its attribute value must fit both the negotiated payload size and the 512-byte attribute limit. Unknown bye reasons remain valid for forwards-compatible error reporting. Object keys must be unique, including equivalent escaped spellings; receivers reject duplicates before decoding.",
   "$defs": {
-    "button": { "type": "string", "enum": ["left", "right"] },
-    "key": { "type": "string", "enum": ["left", "right", "esc"] },
-    "chord": { "type": "string", "enum": ["spaceLeft", "spaceRight", "missionControl"] },
-    "byeReason": { "type": "string", "enum": ["kicked", "displaced", "badauth"] },
-    "finiteNumber": { "type": "number" },
+    "button": {
+      "type": "string",
+      "enum": [
+        "left",
+        "right"
+      ]
+    },
+    "key": {
+      "type": "string",
+      "enum": [
+        "left",
+        "right",
+        "esc"
+      ]
+    },
+    "chord": {
+      "type": "string",
+      "enum": [
+        "spaceLeft",
+        "spaceRight",
+        "missionControl"
+      ]
+    },
+    "byeReason": {
+      "type": "string",
+      "examples": [
+        "kicked",
+        "displaced",
+        "badauth"
+      ]
+    },
+    "finiteNumber": {
+      "type": "number",
+      "minimum": -1.7976931348623157e+308,
+      "maximum": 1.7976931348623157e+308
+    },
     "command": {
       "oneOf": [
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["t", "code"],
+          "required": [
+            "t",
+            "code"
+          ],
           "properties": {
-            "t": { "const": "auth" },
-            "code": { "type": "string" }
+            "t": {
+              "const": "auth"
+            },
+            "code": {
+              "type": "string"
+            }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["t", "dx", "dy"],
+          "required": [
+            "t",
+            "dx",
+            "dy"
+          ],
           "properties": {
-            "t": { "const": "move" },
-            "dx": { "$ref": "#/$defs/finiteNumber" },
-            "dy": { "$ref": "#/$defs/finiteNumber" }
+            "t": {
+              "const": "move"
+            },
+            "dx": {
+              "$ref": "#/$defs/finiteNumber"
+            },
+            "dy": {
+              "$ref": "#/$defs/finiteNumber"
+            }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["t", "b"],
+          "required": [
+            "t",
+            "b"
+          ],
           "properties": {
-            "t": { "const": "click" },
-            "b": { "$ref": "#/$defs/button" }
+            "t": {
+              "const": "click"
+            },
+            "b": {
+              "$ref": "#/$defs/button"
+            }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["t", "dx", "dy"],
+          "required": [
+            "t",
+            "dx",
+            "dy"
+          ],
           "properties": {
-            "t": { "const": "scroll" },
-            "dx": { "$ref": "#/$defs/finiteNumber" },
-            "dy": { "$ref": "#/$defs/finiteNumber" }
+            "t": {
+              "const": "scroll"
+            },
+            "dx": {
+              "$ref": "#/$defs/finiteNumber"
+            },
+            "dy": {
+              "$ref": "#/$defs/finiteNumber"
+            }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["t", "k"],
+          "required": [
+            "t",
+            "k"
+          ],
           "properties": {
-            "t": { "const": "key" },
-            "k": { "$ref": "#/$defs/key" }
+            "t": {
+              "const": "key"
+            },
+            "k": {
+              "$ref": "#/$defs/key"
+            }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["t", "k"],
+          "required": [
+            "t",
+            "k"
+          ],
           "properties": {
-            "t": { "const": "chord" },
-            "k": { "$ref": "#/$defs/chord" }
+            "t": {
+              "const": "chord"
+            },
+            "k": {
+              "$ref": "#/$defs/chord"
+            }
           }
         }
       ]
@@ -74,25 +153,47 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["t"],
+          "required": [
+            "t"
+          ],
           "properties": {
-            "t": { "const": "status" }
+            "t": {
+              "const": "status"
+            }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["t", "reason"],
+          "required": [
+            "t",
+            "reason"
+          ],
           "properties": {
-            "t": { "const": "bye" },
-            "reason": { "$ref": "#/$defs/byeReason" }
+            "t": {
+              "const": "bye"
+            },
+            "reason": {
+              "$ref": "#/$defs/byeReason"
+            }
           }
         }
       ]
     }
   },
   "oneOf": [
-    { "$ref": "#/$defs/command" },
-    { "$ref": "#/$defs/reply" }
-  ]
+    {
+      "$ref": "#/$defs/command"
+    },
+    {
+      "$ref": "#/$defs/reply"
+    }
+  ],
+  "x-bluetooth": {
+    "service": "5A3E0001-8B6C-4B1E-9F8D-2C7A1D4E6F01",
+    "command": "5A3E0002-8B6C-4B1E-9F8D-2C7A1D4E6F01",
+    "reply": "5A3E0003-8B6C-4B1E-9F8D-2C7A1D4E6F01",
+    "maxFrameBytes": 512,
+    "minimumCommandBytes": 80
+  }
 }

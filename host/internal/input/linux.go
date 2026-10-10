@@ -4,8 +4,10 @@ package input
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -66,8 +68,16 @@ type inputEvent struct {
 }
 
 type UInput struct {
-	file  *os.File
-	probe Probe
+	mu   sync.Mutex
+	file interface {
+		Write([]byte) (int, error)
+		Close() error
+		Fd() uintptr
+	}
+	probe          Probe
+	keys           keyState
+	wheelX, wheelY int64
+	lastErr        error
 }
 
 var afterCreate = 100 * time.Millisecond
@@ -140,7 +150,7 @@ func (u *UInput) setup() error {
 	var setup uinputUserDev
 	copy(setup.Name[:], []byte("Stage Wand"))
 	setup.ID = inputID{Bustype: busVirtual, Vendor: 0x1d6b, Product: 0x0001, Version: 1}
-	if err := binary.Write(u.file, binary.LittleEndian, setup); err != nil {
+	if err := binary.Write(u.file, nativeEndian, setup); err != nil {
 		return err
 	}
 	if err := ioctl(fd, uiDevCreate, 0); err != nil {
@@ -151,28 +161,54 @@ func (u *UInput) setup() error {
 }
 
 func (u *UInput) Ready() (bool, string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.file == nil {
+		return false, "input device closed"
+	}
+	if u.lastErr != nil {
+		return false, u.lastErr.Error()
+	}
 	return u.probe.Ready()
 }
 
 func (u *UInput) Close() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	if u.file == nil {
 		return nil
 	}
+	err := u.keys.release(u.emitKey)
 	ioctl(int(u.file.Fd()), uiDevDestroy, 0)
-	err := u.file.Close()
+	err = errors.Join(err, u.file.Close())
 	u.file = nil
 	return err
 }
 
-func (u *UInput) Apply(command protocol.Command) error {
-	switch v := command.(type) {
-	case protocol.Auth:
+func (u *UInput) Apply(command protocol.Command) (err error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.file == nil {
+		return os.ErrClosed
+	}
+	if _, ok := command.(protocol.Auth); ok {
 		return nil
+	}
+	defer func() {
+		if err != nil {
+			u.lastErr = err
+		}
+	}()
+	if err := u.keys.release(u.emitKey); err != nil {
+		return err
+	}
+	switch v := command.(type) {
 	case protocol.Move:
 		dx, dy := relative(v.Dx, v.Dy)
 		if dx == 0 && dy == 0 {
 			return nil
 		}
+		defer func() { err = u.flushAfterError(err) }()
 		if dx != 0 {
 			if err := u.emit(evRel, relX, dx); err != nil {
 				return err
@@ -189,26 +225,18 @@ func (u *UInput) Apply(command protocol.Command) error {
 		if v.Button == protocol.ButtonRight {
 			code = btnRight
 		}
-		if err := u.emit(evKey, code, 1); err != nil {
-			return err
-		}
-		if err := u.emit(evSyn, synReport, 0); err != nil {
-			return err
-		}
-		if err := u.emit(evKey, code, 0); err != nil {
-			return err
-		}
-		return u.emit(evSyn, synReport, 0)
+		return u.keys.tap([]uint16{code}, u.emitKey)
 	case protocol.Scroll:
 		dx, dy := relative(v.Dx, v.Dy)
 		if dx == 0 && dy == 0 {
 			return nil
 		}
+		defer func() { err = u.flushAfterError(err) }()
 		if dy != 0 {
 			if err := u.emit(evRel, relWheelHiRes, dy); err != nil {
 				return err
 			}
-			if err := u.emit(evRel, relWheel, dy/120); err != nil {
+			if err := u.emitWheel(relWheel, dy, &u.wheelY); err != nil {
 				return err
 			}
 		}
@@ -216,13 +244,13 @@ func (u *UInput) Apply(command protocol.Command) error {
 			if err := u.emit(evRel, relHWheelHiRes, dx); err != nil {
 				return err
 			}
-			if err := u.emit(evRel, relHWheel, dx/120); err != nil {
+			if err := u.emitWheel(relHWheel, dx, &u.wheelX); err != nil {
 				return err
 			}
 		}
 		return u.emit(evSyn, synReport, 0)
 	case protocol.KeyPress:
-		return u.tap(keyCode(v.Key), 0)
+		return u.keys.tap([]uint16{keyCode(v.Key)}, u.emitKey)
 	case protocol.ChordPress:
 		code := uint16(keyLeft)
 		switch v.Chord {
@@ -231,19 +259,7 @@ func (u *UInput) Apply(command protocol.Command) error {
 		case protocol.MissionCtrl:
 			code = keyUp
 		}
-		if err := u.emit(evKey, keyLeftCtrl, 1); err != nil {
-			return err
-		}
-		if err := u.emit(evSyn, synReport, 0); err != nil {
-			return err
-		}
-		if err := u.tap(code, 0); err != nil {
-			return err
-		}
-		if err := u.emit(evKey, keyLeftCtrl, 0); err != nil {
-			return err
-		}
-		return u.emit(evSyn, synReport, 0)
+		return u.keys.tap([]uint16{keyLeftCtrl, code}, u.emitKey)
 	default:
 		return nil
 	}
@@ -260,22 +276,44 @@ func keyCode(key protocol.Key) uint16 {
 	}
 }
 
-func (u *UInput) tap(code uint16, _ int) error {
-	if err := u.emit(evKey, code, 1); err != nil {
-		return err
+func (u *UInput) emitKey(code uint16, down bool) error {
+	var value int32
+	if down {
+		value = 1
 	}
-	if err := u.emit(evSyn, synReport, 0); err != nil {
-		return err
-	}
-	if err := u.emit(evKey, code, 0); err != nil {
+	if err := u.emit(evKey, code, value); err != nil {
 		return err
 	}
 	return u.emit(evSyn, synReport, 0)
 }
 
+func (u *UInput) flushAfterError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.Join(err, u.emit(evSyn, synReport, 0))
+}
+
+func (u *UInput) emitWheel(code uint16, delta int32, remainder *int64) error {
+	*remainder += int64(delta)
+	steps := *remainder / 120
+	if steps == 0 {
+		return nil
+	}
+	if err := u.emit(evRel, code, int32(steps)); err != nil {
+		return err
+	}
+	*remainder %= 120
+	return nil
+}
+
 func (u *UInput) emit(evType, code uint16, value int32) error {
 	event := inputEvent{Type: evType, Code: code, Value: value}
-	return binary.Write(u.file, nativeEndian, event)
+	err := binary.Write(u.file, nativeEndian, event)
+	if err == nil {
+		u.lastErr = nil
+	}
+	return err
 }
 
 func ioctl(fd int, request, arg int) error {

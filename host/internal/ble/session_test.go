@@ -32,7 +32,7 @@ func TestAuthStatusAndCommands(t *testing.T) {
 			mu.Unlock()
 		},
 	})
-	if actions := session.Handle("phone", []byte(`{"t":"key","k":"right"}`)); len(actions) != 0 {
+	if actions := session.Handle("phone", []byte(`{"t":"key","k":"right"}`)); len(actions) != 1 || actions[0].Drop != "phone" {
 		t.Fatalf("pre-auth command: %#v", actions)
 	}
 	actions := session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
@@ -44,6 +44,7 @@ func TestAuthStatusAndCommands(t *testing.T) {
 	}
 	session.Handle("phone", []byte(`{"t":"move","dx":1,"dy":-2}`))
 	session.Handle("phone", []byte(`{"t":"move","dx":401,"dy":0}`))
+	session.Handle("phone", []byte(`{"t":"scroll","dx":0,"dy":401}`))
 	session.Handle("phone", []byte(`{"t":"key","k":"right"}`))
 	mu.Lock()
 	defer mu.Unlock()
@@ -59,10 +60,10 @@ func TestAuthStatusAndCommands(t *testing.T) {
 	}
 }
 
-func TestBadAuthBroadcastWhenIdle(t *testing.T) {
+func TestBadAuthTargetsRejectedClient(t *testing.T) {
 	session := NewSession(Hooks{Control: control.NewSession("0000")})
 	actions := session.Handle("intruder", []byte(`{"t":"auth","code":"9999"}`))
-	if len(actions) != 1 || !actions[0].Broadcast || string(actions[0].Notify) != `{"t":"bye","reason":"badauth"}` {
+	if len(actions) != 1 || actions[0].Client != "intruder" || string(actions[0].Notify) != `{"t":"bye","reason":"badauth"}` {
 		t.Fatalf("%#v", actions)
 	}
 }
@@ -71,7 +72,7 @@ func TestBadAuthDropsSecondCentral(t *testing.T) {
 	session := NewSession(Hooks{Control: control.NewSession("0000")})
 	session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
 	actions := session.Handle("other", []byte(`{"t":"auth","code":"1111"}`))
-	if len(actions) != 1 || actions[0].Drop != "other" || actions[0].Notify != nil {
+	if len(actions) != 1 || actions[0].Drop != "other" || actions[0].Client != "other" || string(actions[0].Notify) != `{"t":"bye","reason":"badauth"}` {
 		t.Fatalf("%#v", actions)
 	}
 	if session.Authed() != "phone" {
@@ -107,7 +108,7 @@ func TestKickAndDrop(t *testing.T) {
 		t.Fatalf("peer %q", controller.Peer())
 	}
 	actions := session.Kick()
-	if len(actions) != 2 || !actions[0].Broadcast || string(actions[0].Notify) != `{"t":"bye","reason":"kicked"}` {
+	if len(actions) != 2 || actions[0].Client != "phone" || string(actions[0].Notify) != `{"t":"bye","reason":"kicked"}` {
 		t.Fatalf("kick %#v", actions)
 	}
 	if session.Authed() != "" || controller.Peer() != "" {
@@ -150,5 +151,32 @@ func TestReauthenticationWaitsForDisplacementCleanup(t *testing.T) {
 	<-authenticated
 	if session.Authed() != "phone" || controller.Peer() != "Bluetooth" {
 		t.Fatal("cleanup revoked new session")
+	}
+}
+
+func TestClosedSessionCannotBeReauthenticated(t *testing.T) {
+	controller := control.NewSession("0000")
+	dispatched := 0
+	session := NewSession(Hooks{Control: controller, OnCommand: func(protocol.Command) { dispatched++ }})
+	session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
+	session.Close()
+	session.Close()
+	session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
+	session.Handle("phone", []byte(`{"t":"key","k":"right"}`))
+	if session.Authed() != "" || controller.Peer() != "" || dispatched != 0 {
+		t.Fatalf("closed session accepted control: authed=%q peer=%q commands=%d", session.Authed(), controller.Peer(), dispatched)
+	}
+}
+
+func TestBadReauthenticationReleasesOwner(t *testing.T) {
+	controller := control.NewSession("0000")
+	session := NewSession(Hooks{Control: controller})
+	session.Handle("phone", []byte(`{"t":"auth","code":"0000"}`))
+	actions := session.Handle("phone", []byte(`{"t":"auth","code":"9999"}`))
+	if len(actions) != 1 || actions[0].Client != "phone" || actions[0].Drop != "phone" || string(actions[0].Notify) != `{"t":"bye","reason":"badauth"}` {
+		t.Fatalf("bad auth did not reject the owner: %#v", actions)
+	}
+	if session.Authed() != "" || controller.Peer() != "" {
+		t.Fatal("bad reauthentication retained ownership")
 	}
 }

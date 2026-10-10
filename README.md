@@ -81,7 +81,9 @@ The injector is in-process uinput. That works on Wayland and X11 because the ker
 
 ### Install from GitHub Releases
 
-Each push or merge to `main` publishes Linux packages: a Debian/Ubuntu `.deb` and an Arch `.pkg.tar.zst`. Both include the tray app (`stagewand`), the CLI host (`stagewand-host`), the uinput udev rule, and the boot module config.
+After every required platform check passes, a push or merge to `main` publishes Linux packages: a Debian/Ubuntu `.deb` and an Arch `.pkg.tar.zst`. Both include the tray app (`stagewand`), the CLI host (`stagewand-host`), the uinput udev rule, and the boot module config. The release includes `SHA256SUMS` and the source commit. Failed tests prevent publication; an older workflow cannot overwrite a newer `main` release.
+
+The prebuilt `.deb` targets **amd64 Ubuntu 22.04/24.04 and Debian 12/13**. CI builds on Ubuntu 22.04 and installs that exact artifact in each distribution, including a desktop startup/shutdown check and reinstall/removal. Builds on newer distributions correctly declare their newer library requirements and may not run on older systems.
 
 **Arch Linux**
 
@@ -97,7 +99,7 @@ curl -fL -O https://github.com/EdmundLimBoEn/stage-wand/releases/latest/download
 sudo apt install ./stagewand-host_amd64.deb
 ```
 
-Launch **Stage Wand** from the application menu, or run `stagewand`. Log out of the graphical session and log in again if `/dev/uinput` is not yet writable for your seat.
+Launch **Stage Wand** from the application menu, or run `stagewand`. For Bluetooth, enable the service with `sudo systemctl enable --now bluetooth` and turn on a Bluetooth LE peripheral-capable adapter. Stage Wand respects the radio's power setting. Log out of the graphical session and log in again if `/dev/uinput` is not yet writable for your seat.
 
 ### Install on Arch Linux
 
@@ -158,8 +160,10 @@ That installs `/usr/bin/stagewand`, its application launcher and icon, `/usr/bin
 
 ### Build on Debian or Ubuntu without a package
 
+Source builds require **Go 1.26.8 or newer**. Install a supported Go toolchain before the commands below; older distro `golang-go` packages may be insufficient. A recent Go launcher with automatic toolchain downloads enabled reads the required version from `host/go.mod`.
+
 ```sh
-sudo apt install golang-go git bluez
+sudo apt install git bluez
 sudo systemctl enable --now bluetooth
 cd host
 go build -o stagewand-host ./cmd/stagewand-host
@@ -175,10 +179,12 @@ Log out of the graphical session and log in again, then run `./stagewand-host`.
 To build the Debian/Ubuntu package locally (same layout as the GitHub Release):
 
 ```sh
-sudo apt install golang-go cmake g++ qt6-base-dev qt6-base-dev-tools libgl1-mesa-dev dpkg-dev
+sudo apt install cmake g++ qt6-base-dev qt6-base-dev-tools libgl1-mesa-dev dpkg-dev binutils
 make -C host deb
 sudo apt install ./host/debian/stagewand-host_amd64.deb
 ```
+
+The package derives Qt and C library dependencies from its binaries with `dpkg-shlibdeps`, installs BlueZ and Qt platform plugins, and limits udev permission refreshes to `uinput`. It does not grant the user access to all input devices. Use `make -C host deb OUTDIR=/path/to/output` to choose an artifact directory.
 
 ### Session types
 
@@ -232,7 +238,7 @@ Open the `android/` folder in Android Studio (JDK 21, Android SDK 35) and run th
 
 ```sh
 cd android
-./gradlew :protocol:test :app:assembleDebug
+./gradlew :protocol:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
 The debug APK is `android/app/build/outputs/apk/debug/app-debug.apk`. Install it with `adb install -r` that path, then allow Bluetooth, nearby devices (or location on Android 12 and older), and notifications if the system asks.
@@ -251,15 +257,19 @@ Android has Bluetooth direct and Wi-Fi nearby. A manual `host:port` or Cloudflar
 
 ## Wire protocol
 
-`Shared/Protocol.swift` is the source of truth. `Shared/protocol.schema.json` and `Shared/protocol-fixtures.json` are the cross-language copies used by Go and Kotlin tests. Do not add a new `t` value in Swift without updating the fixtures. The fixture check greps `Protocol.swift` and fails if they drift.
+`Shared/Protocol.swift`, `Shared/protocol.schema.json`, and `Shared/protocol-fixtures.json` define the common contract. Swift, Go, and Kotlin execute the same valid and invalid fixtures. The checks cover command/reply types, exact fields, JSON value types, finite numbers, and Bluetooth UUIDs and size limits. Do not add a new `t` value or field without updating all implementations and fixtures.
 
 First frame must be `auth` within 2 seconds on the WebSocket. A valid code displaces the current peer. The server sends WebSocket pings every 3 seconds and drops a peer after 6 seconds without a pong.
 
-Bluetooth LE uses the same JSON objects as one ATT write-without-response (command) and one notification (reply). UUIDs live in `Shared/Bluetooth.swift` and are copied into `host/internal/ble/uuids.go` and `android/protocol/.../Bluetooth.kt`. There is no extra BLE header. The default 23-byte ATT MTU cannot hold `{"t":"auth","code":"0000"}`, so the phone exchanges a larger MTU before it sends auth. iOS does that in CoreBluetooth. Android calls `requestMtu(517)`. The host accepts the central's MTU. Kick still rotates the code. BlueZ cannot always address a notification to one central, so a failed auth from a second phone disconnects that device instead of broadcasting `badauth` to the authed phone.
+Pairing has one shared budget across Bluetooth and Wi-Fi: five failed code checks within 30 seconds block further checks until that window expires. The existing controller remains connected. **Disconnect & new code** clears the budget and invalidates the old code. Commands pressed while disconnected are discarded, so reconnecting cannot unexpectedly advance a slide or click. Movement and scrolling are split into deltas of at most 400 per axis before delivery; hosts reject larger deltas.
+
+Bluetooth LE uses one complete JSON object per ATT write and one notification per reply, without extra headers or fragmentation. UUIDs live in `Shared/Bluetooth.swift`, `host/internal/ble/uuids.go`, and `android/protocol/.../Bluetooth.kt`. Remotes require at least **80 writable bytes** (ATT MTU 83 or larger), verify each encoded frame fits, and wait for notification subscription before authenticating. The GATT frame limit is **512 bytes**. iOS negotiates MTU through CoreBluetooth; Android requests MTU 517 and checks the actual result. An incompatible adapter produces a connection error instead of truncating commands. Use Wi-Fi nearby if the hardware cannot negotiate enough capacity.
+
+BlueZ notifications are characteristic-wide, so Linux drops an unauthorized second central instead of broadcasting its authentication error to the controlling phone. A second subscriber can still observe status notifications; it cannot inject commands without owning the authenticated session and is disconnected when it attempts a command. Use one active Bluetooth remote. Windows and macOS direct replies to the intended central. Linux retries registration after BlueZ or adapter availability changes and reports unavailable radio state while LAN remains usable.
 
 ## What works here vs what needs a device
 
-Verified in this repository's CI environment:
+Automated release gates configured in this repository:
 
 - Go protocol parser against the golden fixtures, including BLE UUID lockstep with `Shared/Bluetooth.swift`
 - Linux host WebSocket behavior (`bun scripts/ws-smoke.ts --spawn-host`): auth window, `badauth`, displace, 200 ordered moves, ping/pong
@@ -267,11 +277,14 @@ Verified in this repository's CI environment:
 - Shared Bluetooth/LAN control ownership and handover, including race-detector checks and stale-owner rejection
 - Windows host tests on a Windows runner, including the native `INPUT` structure layout, plus `GOOS=windows` compilation of the WinRT GATT adapter
 - Kotlin protocol, square-unlock, command-queue, connection-URL, tap/drag gesture, and Bluetooth backpressure tests
-- `./gradlew :app:assembleDebug`
+- Android app unit tests, lint, and debug APK build, including permission failures, stale Bluetooth callbacks, MTU limits, and discovery cancellation
 - Arch Linux `archlinux:latest` with `pacman -S --needed go git gcc base-devel`, `bash host/arch/check.sh`, and `makepkg -f` for `stagewand-host`
-- Ubuntu `dpkg-deb` package for `stagewand-host` (tray app plus CLI), installed with `apt`
+- One Ubuntu 22.04 `.deb` installed, exercised, reinstalled, and removed on Ubuntu 22.04/24.04 and Debian 12/13
+- Native macOS build, Swift protocol/session checks, Apple LAN integration checks, and an unsigned iOS simulator build
 
-Not verified on hardware in this change:
+The actual checks completed for this worktree and the local package/APK locations are listed in [the release verification record](docs/release-readiness.md).
+
+The earlier Arch/iPhone Bluetooth pointer and tray tests are recorded in [HUMANS.md](HUMANS.md). Every changed build still needs the device acceptance matrix there, including:
 
 - `/dev/uinput` injection on an Arch desktop (needs the udev rule, a loaded `uinput` module, and a graphical seat)
 - `SendInput` on a Windows desktop, including firewall and virtual-desktop chords
@@ -314,8 +327,10 @@ The phone plays a silent audio loop to support pocket operation. Volume recenter
 | Manual connection also fails | Check the popover port and firewall permission. Guest Wi-Fi may isolate clients; use the iPhone hotspot fallback. Update or clear Manual Host after changing networks. |
 | Connected but the Mac ignores input | Ensure the signed app in `~/Applications` is the enabled Accessibility entry, draw the square to unlock touch controls, and put the intended Mac app frontmost. |
 | Volume presses do not register | Check that media volume is not at maximum/minimum and Stage Wand is running. Reopen it after an audio interruption. Test on the physical phone; use NEXT/PREV if necessary. |
-| Phone was locked or connection dropped | Unlock and reopen Stage Wand; it reconnects. Wait for authentication, then draw the square again. Up to eight queued key/click/chord commands may arrive after reconnecting. |
-| Pairing code rejected or Mac used Kick | Read the current code from the Mac popover and replace the saved phone code. Kick rotates the code and disconnects the peer. |
+| Phone was locked or connection dropped | Unlock and reopen Stage Wand; it reconnects. Wait for authentication, then draw the square again. Commands pressed while disconnected are discarded. |
+| Pairing code rejected or host used Kick | Read the current four-digit code from the host and replace the saved phone code. Kick rotates the code and disconnects the peer. After five failed attempts, wait 30 seconds or choose Disconnect & new code. |
+| Linux host says input unavailable | Run `stagewand-host --diagnose`, check the graphical seat and uinput permissions, and relaunch after correcting them. A connected phone and a running dry-run host do not mean input injection is available. |
+| Bluetooth reports insufficient MTU | Use Wi-Fi nearby. Bluetooth needs at least 80 writable bytes; the remote rejects an incompatible link instead of silently losing controls. |
 | Three-finger swipes do nothing | Unlock touch controls and enable the Mission Control shortcuts, and create another desktop for left/right switching. |
 | Code signing reports resource forks or Finder information | Keep DerivedData outside synced Documents folders. Use Xcode’s default DerivedData or pass `-derivedDataPath /tmp/stagewand-device-build` to `xcodebuild`. |
 | Phone app will no longer launch | Reinstall with Xcode if the development provisioning profile has expired. |
@@ -329,16 +344,18 @@ Follow [the complete rehearsal](scripts/rehearse.md) and record real-device resu
 ## Automated checks
 
 ```sh
-swiftc Shared/Protocol.swift scripts/protocol-check.swift -o /tmp/stagewand-protocol-check
+swiftc -swift-version 6 Shared/Protocol.swift Shared/Bluetooth.swift scripts/protocol-check.swift -o /tmp/stagewand-protocol-check
 /tmp/stagewand-protocol-check
 swiftc Shared/SquareUnlock.swift scripts/square-unlock-check.swift -o /tmp/stagewand-square-check
 /tmp/stagewand-square-check
 bun scripts/protocol-fixtures-check.ts
 bun scripts/ws-smoke.ts --spawn
 bun scripts/ws-smoke.ts --spawn-host
-(cd host && go test ./... && go build -o stagewand-host ./cmd/stagewand-host && GOOS=windows GOARCH=amd64 go build -o stagewand-host.exe ./cmd/stagewand-host)
+(cd host && go test -race ./... && go vet ./... && go build -o stagewand-host ./cmd/stagewand-host && GOOS=windows GOARCH=amd64 go build -o stagewand-host.exe ./cmd/stagewand-host)
+python3 scripts/host-process-check.py host/stagewand-host
 bash host/arch/check.sh
-(cd android && ./gradlew :protocol:test :app:assembleDebug)
+bash host/debian/check.sh
+(cd android && ./gradlew :protocol:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug)
 ```
 
 `--spawn` starts the macOS headless server with test code `0000`. `--spawn-host` does the same with the Go host. Both verify delivery order and authentication, then stop. Normal app launches generate a random pairing code.

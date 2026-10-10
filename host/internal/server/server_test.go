@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"testing"
@@ -10,6 +12,89 @@ import (
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/protocol"
 	"github.com/gorilla/websocket"
 )
+
+func TestOriginPolicyAllowsNativeAndSameHostOnly(t *testing.T) {
+	raw, _ := startServer(t, nil)
+	endpoint, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, origin := range []string{"", "http://" + endpoint.Host} {
+		headers := http.Header{}
+		if origin != "" {
+			headers.Set("Origin", origin)
+		}
+		conn, _, err := websocket.DefaultDialer.Dial(raw, headers)
+		if err != nil {
+			t.Fatalf("origin %q: %v", origin, err)
+		}
+		conn.Close()
+	}
+	conn, response, err := websocket.DefaultDialer.Dial(raw, http.Header{"Origin": {"https://unrelated.example"}})
+	if conn != nil {
+		conn.Close()
+	}
+	if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin request accepted: response=%v err=%v", response, err)
+	}
+}
+
+func TestRepeatedWrongCodesCannotDisplaceCurrentController(t *testing.T) {
+	raw, srv := startServer(t, nil)
+	current := dial(t, raw)
+	current.WriteJSON(map[string]string{"t": "auth", "code": "0000"})
+	if readJSON(t, current, time.Second)["t"] != "status" {
+		t.Fatal("auth failed")
+	}
+	owner := srv.session.Peer()
+	for i := 0; i < 5; i++ {
+		bad := dial(t, raw)
+		bad.WriteJSON(map[string]string{"t": "auth", "code": "9999"})
+		if readJSON(t, bad, time.Second)["reason"] != "badauth" {
+			t.Fatal("wrong code accepted")
+		}
+	}
+	blocked := dial(t, raw)
+	blocked.WriteJSON(map[string]string{"t": "auth", "code": "0000"})
+	if readJSON(t, blocked, time.Second)["reason"] != "badauth" {
+		t.Fatal("lockout bypassed")
+	}
+	if srv.session.Peer() != owner {
+		t.Fatal("lockout displaced current controller")
+	}
+	srv.session.SetCode("0012")
+	next := dial(t, raw)
+	next.WriteJSON(map[string]string{"t": "auth", "code": "0012"})
+	if readJSON(t, next, time.Second)["t"] != "status" {
+		t.Fatal("new code could not pair")
+	}
+}
+
+func TestCloseRejectsNewConnectionsAndReleasesController(t *testing.T) {
+	raw, srv := startServer(t, nil)
+	conn := dial(t, raw)
+	conn.WriteJSON(map[string]string{"t": "auth", "code": "0000"})
+	readJSON(t, conn, time.Second)
+	if err := srv.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if srv.session.Peer() != "" {
+		t.Fatal("shutdown retained ownership")
+	}
+	if frame := readJSON(t, conn, time.Second); frame["reason"] != "kicked" {
+		t.Fatalf("shutdown: %v", frame)
+	}
+	other, _, err := websocket.DefaultDialer.Dial(raw, nil)
+	if other != nil {
+		other.Close()
+	}
+	if err == nil {
+		t.Fatal("server accepted after close")
+	}
+	if err := srv.Close(); err != nil {
+		t.Fatalf("repeated close: %v", err)
+	}
+}
 
 func startServer(t *testing.T, onCommand func(protocol.Command)) (string, *Server) {
 	t.Helper()
@@ -67,12 +152,38 @@ func TestNoAuthCloses(t *testing.T) {
 func TestBadAuth(t *testing.T) {
 	raw, _ := startServer(t, nil)
 	conn := dial(t, raw)
-	if err := conn.WriteJSON(map[string]string{"t": "auth", "code": "wrong"}); err != nil {
+	if err := conn.WriteJSON(map[string]string{"t": "auth", "code": "9999"}); err != nil {
 		t.Fatal(err)
 	}
 	frame := readJSON(t, conn, 2*time.Second)
 	if frame["t"] != "bye" || frame["reason"] != "badauth" {
 		t.Fatalf("got %#v", frame)
+	}
+}
+
+func TestRepeatedAuthHasTheSameReplyAndValidation(t *testing.T) {
+	raw, srv := startServer(t, nil)
+	conn := dial(t, raw)
+	for i := 0; i < 2; i++ {
+		if err := conn.WriteJSON(map[string]string{"t": "auth", "code": "0000"}); err != nil {
+			t.Fatal(err)
+		}
+		if frame := readJSON(t, conn, time.Second); frame["t"] != "status" {
+			t.Fatalf("auth %d: %v", i, frame)
+		}
+	}
+	if err := conn.WriteJSON(map[string]string{"t": "auth", "code": "9999"}); err != nil {
+		t.Fatal(err)
+	}
+	if frame := readJSON(t, conn, time.Second); frame["reason"] != "badauth" {
+		t.Fatalf("bad reauth: %v", frame)
+	}
+	deadline := time.Now().Add(time.Second)
+	for srv.session.Peer() != "" {
+		if time.Now().After(deadline) {
+			t.Fatal("bad reauth retained controller")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

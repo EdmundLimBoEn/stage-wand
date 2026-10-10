@@ -38,7 +38,7 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     if link.state == .enterCode {
                         HStack {
-                            TextField("Enter Mac code", text: $pairingCode)
+                            TextField("Enter pairing code", text: $pairingCode)
                                 .keyboardType(.numberPad)
                                 .textContentType(.oneTimeCode)
                                 .textFieldStyle(.roundedBorder)
@@ -49,6 +49,9 @@ struct ContentView: View {
                             }
                                 .disabled(pairingCode.isEmpty)
                         }
+                        Text("Check the code on your computer. After five failed attempts, wait 30 seconds or refresh the code on the computer.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     Toggle(isOn: $armed) {
                         Label(armed ? "ARMED" : "ARM POINTER", systemImage: armed ? "hand.draw.fill" : "hand.draw")
@@ -148,7 +151,7 @@ struct ContentView: View {
             case .enterCode: showingSettings = true
             case .localNetworkDenied:
                 if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
-            case .disconnected: link.start()
+            case .disconnected, .failed: link.start()
             default: break
             }
         } label: {
@@ -159,12 +162,13 @@ struct ContentView: View {
 
     private var connectionText: String {
         switch link.state {
-        case .searching: "Searching for your Mac…"
+        case .searching: "Searching for your computer…"
         case .connecting(let host): "Connecting to \(link.macName ?? host)…"
-        case .enterCode: "Enter code · \(link.macName ?? "Mac")"
-        case .authed: "\(link.route) · \(link.macName ?? "Mac")"
+        case .enterCode: "Enter code · \(link.macName ?? "Computer")"
+        case .authed: "\(link.route) · \(link.macName ?? "Computer")"
         case .disconnected: touchLocked ? "Disconnected · Unlock to reconnect" : "Disconnected · Tap to reconnect"
         case .localNetworkDenied: "Local network denied, fix in Settings"
+        case .failed(let message): message
         }
     }
 

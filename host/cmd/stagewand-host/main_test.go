@@ -1,14 +1,57 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/server"
+	"io"
 	"testing"
 
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/input"
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/protocol"
 )
+
+func TestPairingCodeValidation(t *testing.T) {
+	for _, code := range []string{"0000", "0012", "9999"} {
+		if !validCode(code) {
+			t.Fatalf("rejected %q", code)
+		}
+	}
+	for _, code := range []string{"", "123", "12345", " 123", "１２３４", "abcd", "12\n3"} {
+		if validCode(code) {
+			t.Fatalf("accepted %q", code)
+		}
+	}
+}
+
+func TestPairingCodeEntropyFailureIsNotAValidCode(t *testing.T) {
+	code, err := generateCode(bytes.NewReader(nil), "")
+	if !errors.Is(err, io.EOF) || code != "" {
+		t.Fatalf("code=%q err=%v", code, err)
+	}
+}
+
+func TestPairingCodeRotationNeverReusesCurrentCode(t *testing.T) {
+	for _, previous := range []string{"0000", "0012", "9999"} {
+		for _, entropy := range [][]byte{{0, 0}, {0, 12}, {0x27, 0x0e}} {
+			code, err := generateCode(bytes.NewReader(entropy), previous)
+			if err != nil || !validCode(code) || code == previous {
+				t.Fatalf("previous=%q code=%q err=%v", previous, code, err)
+			}
+		}
+	}
+}
+
+func TestUnavailableInputCannotReportReady(t *testing.T) {
+	injector, _ := openInjector(true)
+	if ready, note := injector.Ready(); ready || note == "" {
+		t.Fatalf("dry run ready=%v note=%q", ready, note)
+	}
+	if ready, note := (unavailableInput{reason: "permission denied"}).Ready(); ready || note != "permission denied" {
+		t.Fatalf("missing input ready=%v note=%q", ready, note)
+	}
+}
 
 type failingInjector struct {
 	input.Logging

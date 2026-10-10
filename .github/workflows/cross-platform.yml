@@ -29,18 +29,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.26.8"
           cache-dependency-path: host/go.sum
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - name: Install Go vulnerability scanner
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - name: Check Linux host vulnerabilities
+        working-directory: host
+        run: govulncheck ./...
       - name: Test and build Linux host
         working-directory: host
         run: |
+          go vet ./...
           go test -race ./...
           go build -o stagewand-host ./cmd/stagewand-host
           ./stagewand-host --diagnose
           ./stagewand-host --selftest --dry-run
+      - name: Check host startup, status, pairing reset, and shutdown
+        run: python3 scripts/host-process-check.py host/stagewand-host
       - name: Cross-compile Windows host
         working-directory: host
         run: GOOS=windows GOARCH=amd64 go build -o stagewand-host.exe ./cmd/stagewand-host
@@ -53,8 +61,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.26.8"
           cache-dependency-path: host/go.sum
+      - name: Install Go vulnerability scanner
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - name: Check Windows host vulnerabilities
+        working-directory: host
+        run: govulncheck ./...
+      - name: Vet Windows host
+        working-directory: host
+        run: go vet ./...
       - name: Test Windows input ABI and host policies
         working-directory: host
         run: go test ./internal/... ./cmd/...
@@ -77,7 +93,7 @@ jobs:
             printf '\nDisableSandbox\n' >> /etc/pacman.conf
           fi
           pacman -Syu --noconfirm --needed archlinux-keyring
-          pacman -Syu --noconfirm --needed go git gcc base-devel namcap cmake qt6-base
+          pacman -Syu --noconfirm --needed go git gcc base-devel namcap cmake qt6-base qt6-wayland bluez hicolor-icon-theme
       - uses: actions/checkout@v4
       - name: Trust the checkout for git and Go VCS
         run: git config --global --add safe.directory '*'
@@ -108,29 +124,21 @@ jobs:
 
   host-deb:
     name: host (Debian/Ubuntu)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.26.8"
           cache-dependency-path: host/go.sum
       - name: Install Debian packaging tools and Qt 6
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ qt6-base-dev qt6-base-dev-tools libgl1-mesa-dev dpkg-dev
+          sudo apt-get install -y --no-install-recommends cmake g++ qt6-base-dev qt6-base-dev-tools libgl1-mesa-dev dpkg-dev
       - name: Check and build the .deb
         run: |
-          chmod +x host/debian/build.sh host/debian/check.sh host/debian/postinst
           bash host/debian/check.sh
           bash host/debian/build.sh "$GITHUB_WORKSPACE/dist"
-      - name: Install the .deb and smoke the host
-        run: |
-          sudo apt-get install -y ./dist/stagewand-host_amd64.deb
-          command -v stagewand-host
-          command -v stagewand
-          stagewand-host --diagnose
-          stagewand-host --selftest --dry-run
       - name: Upload Debian/Ubuntu package
         uses: actions/upload-artifact@v4
         with:
@@ -138,11 +146,89 @@ jobs:
           path: dist/stagewand-host*.deb
           if-no-files-found: error
 
+  host-deb-smoke:
+    name: installed .deb (${{ matrix.image }})
+    needs: host-deb
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "ubuntu:24.04", "debian:12", "debian:13"]
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Install checkout prerequisites
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-deb
+          path: dist
+      - name: Install, exercise, reinstall, and remove the release package
+        run: bash host/debian/smoke.sh "$GITHUB_WORKSPACE/dist/stagewand-host_amd64.deb"
+
+  apple:
+    name: macOS host and iOS remote
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Swift protocol, command delivery, URL, and gesture checks
+        run: |
+          swiftc -swift-version 6 Shared/Protocol.swift Shared/Bluetooth.swift scripts/protocol-check.swift -o "$RUNNER_TEMP/protocol-check"
+          "$RUNNER_TEMP/protocol-check"
+          swiftc -swift-version 6 Shared/Protocol.swift Shared/CommandQueue.swift scripts/command-queue-check.swift -o "$RUNNER_TEMP/command-queue-check"
+          "$RUNNER_TEMP/command-queue-check"
+          swiftc -swift-version 6 Shared/ConnectionURL.swift scripts/connection-url-check.swift -o "$RUNNER_TEMP/connection-url-check"
+          "$RUNNER_TEMP/connection-url-check"
+          swiftc -swift-version 6 Shared/SquareUnlock.swift scripts/square-unlock-check.swift -o "$RUNNER_TEMP/square-unlock-check"
+          "$RUNNER_TEMP/square-unlock-check"
+          swiftc -swift-version 6 mac/Sources/AuthenticationLimiter.swift mac/Sources/PeerOwnership.swift scripts/session-security-check.swift -o "$RUNNER_TEMP/session-security-check"
+          "$RUNNER_TEMP/session-security-check"
+      - name: Bluetooth client and server failure-path checks
+        run: bash scripts/bluetooth-check.sh
+      - name: Apple transport integration checks
+        run: |
+          transport_sources=(
+            Shared/Protocol.swift
+            ios/StageWand/Discovery.swift ios/StageWand/LocalSocket.swift
+            mac/Sources/Server.swift mac/Sources/AuthenticationLimiter.swift mac/Sources/PeerOwnership.swift
+          )
+          swiftc -swift-version 6 "${transport_sources[@]}" scripts/local-socket-check.swift -o "$RUNNER_TEMP/local-socket-check"
+          "$RUNNER_TEMP/local-socket-check"
+          swiftc -swift-version 6 "${transport_sources[@]}" \
+            Shared/ConnectionURL.swift Shared/CommandQueue.swift Shared/Bluetooth.swift \
+            ios/StageWand/BluetoothClient.swift ios/StageWand/Link.swift \
+            scripts/link-delivery-check.swift -o "$RUNNER_TEMP/link-delivery-check"
+          "$RUNNER_TEMP/link-delivery-check"
+      - name: Build the macOS host
+        run: swift build --package-path mac -c release
+      - name: WebSocket smoke against the macOS host
+        run: bun scripts/ws-smoke.ts --spawn
+      - name: Install XcodeGen
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - name: Build the iOS remote for the simulator
+        working-directory: ios
+        run: |
+          xcodegen generate
+          xcodebuild -project StageWand.xcodeproj -scheme StageWand -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/stagewand-ios" \
+            CODE_SIGNING_ALLOWED=NO build
+
   linux-release:
     name: publish Linux packages
-    needs: [host-arch, host-deb]
+    needs: [protocol, host, host-windows, host-arch, host-deb, host-deb-smoke, android, apple]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    concurrency:
+      group: stagewand-linux-release
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -155,10 +241,28 @@ jobs:
         with:
           name: linux-deb
           path: dist
-      - name: Checksums
+      - name: Record tested source and checksums
         working-directory: dist
-        run: sha256sum stagewand-host*.deb stagewand-host*.pkg.tar.zst > SHA256SUMS
+        run: |
+          printf 'commit=%s\nsource=%s/%s/commit/%s\nworkflow_run=%s/%s/actions/runs/%s\ndeb_build=ubuntu-22.04\ndeb_tested=ubuntu-22.04,ubuntu-24.04,debian-12,debian-13\ndeb_gui=offscreen,wayland,x11\n' \
+            "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > BUILD-INFO.txt
+          sha256sum stagewand-host*.deb stagewand-host*.pkg.tar.zst BUILD-INFO.txt > SHA256SUMS
+      - name: Check this is still the latest main commit
+        id: current
+        run: |
+          main_sha=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
+          if [ "$main_sha" = "$GITHUB_SHA" ]; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::A newer main commit exists; skipping this superseded release.'
+          fi
+      - name: Point the moving Linux tag at the tested commit
+        if: steps.current.outputs.publish == 'true'
+        run: git push --force origin "$GITHUB_SHA:refs/tags/linux"
       - name: Publish GitHub Release
+        if: steps.current.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: linux
@@ -166,7 +270,11 @@ jobs:
           name: Linux packages
           make_latest: true
           body: |
-            Packages from `${{ github.sha }}` on `main`.
+            Packages from tested commit `${{ github.sha }}` on `main`.
+            [Build and test results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+            The amd64 Debian package is built on Ubuntu 22.04 and install-tested on Ubuntu 22.04/24.04 and Debian 12/13.
+            All protocol, Linux, Windows, Android, macOS, and iOS build checks passed before publication.
 
             **Arch Linux**
 
@@ -185,10 +293,9 @@ jobs:
             Log out of the graphical session and back in if `/dev/uinput` is not writable yet.
           fail_on_unmatched_files: true
           files: |
-            dist/stagewand-host_amd64.deb
-            dist/stagewand-host_*_amd64.deb
-            dist/stagewand-host-x86_64.pkg.tar.zst
-            dist/stagewand-host-*.pkg.tar.zst
+            dist/stagewand-host*.deb
+            dist/stagewand-host*.pkg.tar.zst
+            dist/BUILD-INFO.txt
             dist/SHA256SUMS
 
   android:
@@ -202,6 +309,6 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: "platform-tools platforms;android-35 build-tools;35.0.0"
-      - name: Protocol tests and debug APK
+      - name: Protocol, transport, and lint checks plus debug and unsigned release APKs
         working-directory: android
-        run: ./gradlew --no-daemon :protocol:test :app:assembleDebug
+        run: ./gradlew --no-daemon :protocol:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease

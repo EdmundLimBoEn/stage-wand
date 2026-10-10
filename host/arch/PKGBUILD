@@ -2,14 +2,13 @@
 
 pkgname=stagewand-host
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc='LAN WebSocket and Bluetooth LE host that injects Stage Wand pointer and key events via uinput'
 arch=('x86_64' 'aarch64')
 url='https://github.com/EdmundLimBoEn/stage-wand'
 license=('LicenseRef-NOASSERTION')
-depends=('glibc' 'qt6-base')
-optdepends=('bluez: Bluetooth LE GATT peripheral')
-makedepends=('go' 'gcc' 'cmake')
+depends=('glibc' 'libgcc' 'libstdc++' 'qt6-base' 'qt6-wayland' 'bluez' 'hicolor-icon-theme')
+makedepends=('go>=1.26.8' 'gcc' 'cmake')
 install=stagewand-host.install
 options=('!debug' '!lto')
 source=()
@@ -45,7 +44,7 @@ check() {
   export GOPATH="$srcdir/go"
   export GOCACHE="$srcdir/cache"
   GOFLAGS="-mod=readonly -modcacherw -buildvcs=false" \
-    go test ./internal/... ./cmd/...
+    go test ./internal/... ./cmd/... .
 }
 
 package() {
