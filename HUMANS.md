@@ -1,5 +1,13 @@
 # HUMANS.md
 
+## App Store audit, 11 October 2026
+
+Pocket mode is retained by Edmund's request. The app remains blocked for App Store submission by its volume-button behavior and silent background audio. See [the audit](docs/app-store-audit.md).
+
+- [ ] Decide a compliant product/distribution path before attempting App Store submission.
+- [ ] If pursuing the App Store, resolve the retained behavior blockers and add privacy manifest, policy/support access, icon, and verified release versions.
+- [ ] Validate a signed archive with the required Apple SDK, complete actual iPhone/iPad and IPv6-only tests, and supply App Store Connect metadata, companion review instructions, privacy answers, and export compliance.
+
 Physical setup and acceptance checks for Stage Wand. Start with [README.md](README.md); leave checks unticked until verified on the actual devices.
 
 ## Release acceptance after the robustness changes

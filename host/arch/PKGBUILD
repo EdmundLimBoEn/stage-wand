@@ -8,7 +8,7 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/EdmundLimBoEn/stage-wand'
 license=('LicenseRef-NOASSERTION')
 depends=('glibc' 'libgcc' 'libstdc++' 'qt6-base' 'qt6-wayland' 'bluez' 'hicolor-icon-theme')
-makedepends=('go>=1.26.8' 'gcc' 'cmake')
+makedepends=('go>=1.26.9' 'gcc' 'cmake')
 install=stagewand-host.install
 options=('!debug' '!lto')
 source=()
