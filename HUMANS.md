@@ -1,6 +1,38 @@
 # HUMANS.md
 
+## App Store audit, 11 October 2026
+
+Pocket mode is retained by Edmund's request. The app remains blocked for App Store submission by its volume-button behavior and silent background audio. See [the audit](docs/app-store-audit.md).
+
+- [ ] Decide a compliant product/distribution path before attempting App Store submission.
+- [ ] If pursuing the App Store, resolve the retained behavior blockers and add privacy manifest, policy/support access, icon, and verified release versions.
+- [ ] Validate a signed archive with the required Apple SDK, complete actual iPhone/iPad and IPv6-only tests, and supply App Store Connect metadata, companion review instructions, privacy answers, and export compliance.
+
 Physical setup and acceptance checks for Stage Wand. Start with [README.md](README.md); leave checks unticked until verified on the actual devices.
+
+## Release acceptance after the robustness changes
+
+Automated checks and container package tests do not exercise phone radios, a graphical input seat, or Windows/macOS native runtime behavior. The Arch confirmations below describe the earlier build, not an acceptance of these changes.
+
+For each row, test **both iPhone and Android**, over **Bluetooth and Wi-Fi**: pairing (including a leading-zero code), NEXT/PREV/Esc, left/right click, small/large scroll, 60 seconds of pointer movement, and desktop-switching chords. Record the device, OS, adapter, build, and results before ticking.
+
+- [ ] Arch Linux: repeat the previously working iPhone path and verify Android, using the new packaged host.
+- [ ] Debian: install the new `.deb` in a graphical session; test BlueZ, uinput after a fresh login/reboot, and the controls above.
+- [ ] Ubuntu: repeat the `.deb` checks on the oldest supported Ubuntu 22.04 baseline and a current supported desktop.
+- [ ] macOS: native build/signing and Accessibility/Bluetooth permissions, then both remotes and transports.
+- [ ] Windows: execute native WinRT and SendInput tests/build on Windows, verify both remotes and transports, and firewall/virtual-desktop behavior.
+- [ ] Every host: wrong code, five wrong attempts followed by the 30-second cooldown, Disconnect & new code, and successful recovery using the new code.
+- [ ] Every host: rapid Bluetooth/Wi-Fi handover between two phones; only the newest authenticated controller can inject. On Linux, second subscribers can see characteristic-wide notifications; ensure a rejected phone disconnects instead of remaining falsely connected.
+- [ ] Every Bluetooth pair: disable/re-enable the radio, walk out of range/back, suspend/wake the host, and lock/unlock the phone. Confirm recovery and that no stale key/click is replayed.
+- [ ] Linux: restart BlueZ while paired and confirm the host reports the interruption and advertises again. Restart the app if the system D-Bus itself was lost.
+- [ ] Windows: launch with Bluetooth disabled, enable it, and relaunch if the initial provider setup was unavailable. Test recovery from radio loss after a successful startup.
+- [ ] Both phones: locked-screen hardware volume keys for a full rehearsal. Android OEM background restrictions and iOS audio interruptions still need physical testing.
+- [ ] Release gates: run native macOS/iOS and Windows CI for this exact revision; simulator/fake-radio tests do not certify hardware interoperability.
+- [ ] Distribution: provide release signing/provisioning for the phone apps and choose a distribution license before a public packaged release. Android release builds currently produce an unsigned APK; do not distribute a debug build as a signed release.
+
+See [the release verification record](docs/release-readiness.md) for automated evidence and remaining limits.
+
+## Earlier setup and acceptance history
 
 - [x] Approve `docs/DESIGN.md` and `PLAN.md` before Wave 0 starts
 - [x] Generate the iOS project, use the selected team `DUU8J39BA7`, build, install, and launch on the connected iPhone 17 Pro via Xcode tools.
@@ -25,7 +57,7 @@ Physical setup and acceptance checks for Stage Wand. Start with [README.md](READ
 - [ ] Arch Linux host: `sudo pacman -S --needed go git`, `sudo pacman -S --needed bluez bluez-utils`, `sudo systemctl enable --now bluetooth`, build `host/stagewand-host`, install `host/udev/70-stagewand-uinput.rules` and `host/modules-load.d/uinput.conf`, `sudo modprobe uinput`, log out of the graphical session and back in, run `./stagewand-host --diagnose`, then `./stagewand-host`. Confirm the pairing code, LAN address, that Input shows uinput ready with wayland or x11, and that Bluetooth shows advertising.
 - [ ] Arch Linux host: pair an iPhone or Android remote on Hyprland, Sway, or another Wayland session over Bluetooth direct, then verify next/prev, pointer, click, scroll, and Ctrl+arrow chords in the frontmost app.
 - [ ] Arch Linux host: repeat pointer and click over Wi-Fi nearby, and on an X11 session (i3 or Xfce) if you use one.
-- [ ] Debian or Ubuntu host: same uinput udev and modules-load files plus `bluez`, then pair a remote over Bluetooth and Wi-Fi and verify injection.
+- [ ] Debian or Ubuntu host: install `stagewand-host_amd64.deb` from the `linux` GitHub Release (or build with `make -C host deb`), then pair a remote over Bluetooth and Wi-Fi and verify injection.
 - [ ] Windows host: run `stagewand-host.exe`, allow the firewall, turn Bluetooth on, pair a remote over Bluetooth and over LAN, and verify `SendInput` next/prev, pointer, and Win+Ctrl+Left/Right plus Win+Tab.
 - [ ] Android: install the debug APK, allow Bluetooth and nearby devices or enter a manual `host:port`, draw the square, pair with the four-digit code, and confirm volume up/down while the app is in the foreground.
 - [ ] Android: record whether volume still works after locking the screen or leaving the app. Treat failure as expected until proven on that OEM.

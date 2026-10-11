@@ -8,7 +8,17 @@ enum Command: Equatable, Sendable, Codable {
     private enum Fields: String, CodingKey { case t, code, dx, dy, b, k }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Fields.self)
-        switch try c.decode(String.self, forKey: .t) {
+        let type = try c.decode(String.self, forKey: .t)
+        let fields: [String]
+        switch type {
+        case "auth": fields = ["t", "code"]
+        case "move", "scroll": fields = ["t", "dx", "dy"]
+        case "click": fields = ["t", "b"]
+        case "key", "chord": fields = ["t", "k"]
+        default: throw DecodingError.dataCorruptedError(forKey: .t, in: c, debugDescription: "Unknown command")
+        }
+        try requireFields(fields, from: decoder)
+        switch type {
         case "auth": self = .auth(code: try c.decode(String.self, forKey: .code))
         case "move", "scroll":
             let x = try c.decode(Double.self, forKey: .dx), y = try c.decode(Double.self, forKey: .dy)
@@ -39,7 +49,15 @@ enum Reply: Equatable, Sendable, Codable {
     private enum Fields: String, CodingKey { case t, reason }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Fields.self)
-        switch try c.decode(String.self, forKey: .t) {
+        let type = try c.decode(String.self, forKey: .t)
+        let fields: [String]
+        switch type {
+        case "status": fields = ["t"]
+        case "bye": fields = ["t", "reason"]
+        default: throw DecodingError.dataCorruptedError(forKey: .t, in: c, debugDescription: "Unknown reply")
+        }
+        try requireFields(fields, from: decoder)
+        switch type {
         case "status": self = .status
         case "bye": self = .bye(reason: try c.decode(String.self, forKey: .reason))
         default: throw DecodingError.dataCorruptedError(forKey: .t, in: c, debugDescription: "Unknown reply")
@@ -51,5 +69,71 @@ enum Reply: Equatable, Sendable, Codable {
         case .status: try c.encode("status", forKey: .t)
         case .bye(let reason): try c.encode("bye", forKey: .t); try c.encode(reason, forKey: .reason)
         }
+    }
+}
+
+private struct WireField: CodingKey {
+    let stringValue: String
+    var intValue: Int? { nil }
+    init?(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { return nil }
+}
+
+private func requireFields(_ expected: [String], from decoder: Decoder) throws {
+    let fields = try decoder.container(keyedBy: WireField.self)
+    guard Set(fields.allKeys.map(\.stringValue)) == Set(expected) else {
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unexpected frame fields"))
+    }
+}
+
+enum WireProtocol {
+    static func decodeCommand(_ data: Data) throws -> Command {
+        try requireUniqueKeys(data)
+        return try JSONDecoder().decode(Command.self, from: data)
+    }
+
+    static func decodeReply(_ data: Data) throws -> Reply {
+        try requireUniqueKeys(data)
+        return try JSONDecoder().decode(Reply.self, from: data)
+    }
+
+    // Codable containers collapse duplicate keys before init(from:) can inspect them.
+    private static func requireUniqueKeys(_ data: Data) throws {
+        guard String(data: data, encoding: .utf8) != nil else { throw invalidFrame() }
+        let bytes = Array(data)
+        var index = 0, depth = 0
+        var expectingKey = true
+        var keys = Set<String>()
+        while index < bytes.count {
+            let byte = bytes[index]
+            if byte == 34 {
+                let start = index
+                index += 1
+                while index < bytes.count {
+                    if bytes[index] == 92 { index += 2; continue }
+                    if bytes[index] == 34 { break }
+                    index += 1
+                }
+                guard index < bytes.count else { throw invalidFrame() }
+                if depth == 1 && expectingKey {
+                    let key = try JSONDecoder().decode(String.self, from: Data(bytes[start...index]))
+                    guard keys.insert(key).inserted else { throw invalidFrame() }
+                }
+            } else if byte == 123 || byte == 91 {
+                depth += 1
+            } else if byte == 125 || byte == 93 {
+                if depth == 1 && expectingKey && !keys.isEmpty { throw invalidFrame() }
+                depth -= 1
+            } else if depth == 1 && byte == 44 {
+                expectingKey = true
+            } else if depth == 1 && byte == 58 {
+                expectingKey = false
+            }
+            index += 1
+        }
+    }
+
+    private static func invalidFrame() -> DecodingError {
+        .dataCorrupted(.init(codingPath: [], debugDescription: "Invalid JSON frame or duplicate field"))
     }
 }

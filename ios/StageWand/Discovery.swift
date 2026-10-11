@@ -7,6 +7,7 @@ final class Discovery: ObservableObject {
     @Published private(set) var results: [(name: String, endpoint: NWEndpoint)] = []
     var onResults: (() -> Void)?
     var onDenied: (() -> Void)?
+    var onFailure: (() -> Void)?
     private var browser: NWBrowser?
     private var resolver: NWConnection?
     private var resolutionID = UUID()
@@ -31,14 +32,17 @@ final class Discovery: ObservableObject {
             Task { @MainActor in
                 guard let self, self.browser === browser else { return }
                 switch state {
-                case .failed:
+                case .failed(let error):
                     browser.cancel()
                     self.browser = nil
-                    self.onDenied?()
+                    self.results.removeAll()
+                    if case .dns(let code) = error, code == -65570 { self.onDenied?() }
+                    else { self.onFailure?() }
                 case .waiting(let error):
                     if case .dns(let code) = error, code == -65570 {
                         browser.cancel()
                         self.browser = nil
+                        self.results.removeAll()
                         self.onDenied?()
                     }
                 default: break
@@ -48,6 +52,12 @@ final class Discovery: ObservableObject {
         browser.start(queue: .main)
     }
 
+    func stop() {
+        browser?.cancel()
+        browser = nil
+        results.removeAll()
+        cancelResolution()
+    }
 
     // Native WebSocket needs a URL endpoint; resolve over peer-to-peer TCP first and retain its interface.
     func resolve(_ endpoint: NWEndpoint, completion: @escaping @MainActor (URL?, NWInterface?) -> Void) {

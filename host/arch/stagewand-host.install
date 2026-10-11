@@ -1,14 +1,21 @@
 post_install() {
-  if command -v systemd-modules-load >/dev/null 2>&1; then
-    systemd-modules-load || true
+  if command -v modprobe >/dev/null 2>&1; then
+    modprobe uinput || true
   fi
   if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload || true
-    udevadm trigger --action=add --subsystem-match=misc || true
+    udevadm trigger --action=add --subsystem-match=misc --sysname-match=uinput || true
   fi
   echo "If /dev/uinput is still not writable, log out of the graphical session and log in again so logind applies uaccess."
 }
 
 post_upgrade() {
   post_install
+}
+
+post_remove() {
+  if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload || true
+    udevadm trigger --action=add --subsystem-match=misc --sysname-match=uinput || true
+  fi
 }

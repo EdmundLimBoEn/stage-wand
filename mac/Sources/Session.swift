@@ -4,15 +4,18 @@ import SwiftUI
 @MainActor
 final class Session: ObservableObject {
     @Published var code = "0000"
-    @Published var peer: String?
+    @Published private(set) var peer: String?
     @Published var port: UInt16 = 8787
     @Published var axGranted = false
     @Published var lanIP: String?
     @Published var startupError: String?
+    @Published var bluetoothError: String?
     @Published var tunnelURL: String?
     var server: Server?
     var bluetooth: BluetoothServer?
     private var refreshTimer: Timer?
+    private var authentication = AuthenticationLimiter()
+    private let ownership = PeerOwnership()
 
     init() {
         rotateCode()
@@ -25,7 +28,23 @@ final class Session: ObservableObject {
         repeat {
             code = String(format: "%04d", Int.random(in: 0...9999))
         } while code == previous
+        authentication.reset()
     }
+
+    func authorize(_ candidate: String) -> Bool {
+        authentication.authorize(candidate, expected: code)
+    }
+
+    func claimPeer(id: UUID, name: String, onDisplaced: @escaping @MainActor () -> Void) {
+        ownership.claim(id: id, onDisplaced: onDisplaced)
+        peer = name
+    }
+
+    func releasePeer(id: UUID) {
+        if ownership.release(id: id) { peer = nil }
+    }
+
+    func isActivePeer(id: UUID) -> Bool { ownership.contains(id: id) }
 
     func kick() {
         rotateCode()

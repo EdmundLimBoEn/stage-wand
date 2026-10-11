@@ -3,6 +3,7 @@ package control
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestStaleOwnerCannotInjectOrClearNewPeer(t *testing.T) {
@@ -24,6 +25,44 @@ func TestStaleOwnerCannotInjectOrClearNewPeer(t *testing.T) {
 	}
 	if ok, _ := session.Claim("0000", first); ok {
 		t.Fatal("old code accepted")
+	}
+}
+
+func TestAuthFailuresShareBudgetAcrossTransports(t *testing.T) {
+	session := NewSession("0012")
+	now := time.Unix(100, 0)
+	session.now = func() time.Time { return now }
+	current := &Owner{Name: "connected"}
+	session.Claim("0012", current)
+	for i := 0; i < authFailureLimit; i++ {
+		if ok, _ := session.Claim("1234", &Owner{Name: "new connection"}); ok {
+			t.Fatal("wrong code accepted")
+		}
+	}
+	if ok, _ := session.Claim("0012", &Owner{Name: "Bluetooth"}); ok {
+		t.Fatal("new transport bypassed lockout")
+	}
+	if !session.Dispatch(current, func() {}) {
+		t.Fatal("failed pairing interrupted current controller")
+	}
+	now = now.Add(authFailureWindow)
+	if ok, _ := session.Claim("0012", &Owner{Name: "Bluetooth"}); !ok {
+		t.Fatal("lockout did not expire")
+	}
+}
+
+func TestCodeRotationClearsAuthLockout(t *testing.T) {
+	session := NewSession("0012")
+	owner := &Owner{Name: "phone"}
+	for i := 0; i < authFailureLimit; i++ {
+		session.Claim("1234", owner)
+	}
+	session.SetCode("0099")
+	if ok, _ := session.Claim("0099", owner); !ok {
+		t.Fatal("code rotation retained lockout")
+	}
+	if ok, _ := session.Claim("0099", nil); ok {
+		t.Fatal("nil owner accepted")
 	}
 }
 

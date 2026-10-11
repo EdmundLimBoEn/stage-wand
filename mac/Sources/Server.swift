@@ -8,7 +8,7 @@ import Network
         var lastPong = ContinuousClock.now
         var authTimeout: Task<Void, Never>?
         var heartbeat: Task<Void, Never>?
-        var moves = 0
+        var pendingReplies = 0
         init(_ connection: NWConnection) { self.connection = connection }
     }
 
@@ -17,6 +17,7 @@ import Network
     private let queue = DispatchQueue(label: "systems.edmundlim.stagewand.server")
     private var listener: NWListener?
     private var peers: [UUID: Peer] = [:]
+    private var closingPeers = 0
     private var active: UUID?
 
     init(session: Session, onCommand: @escaping @MainActor @Sendable (Command) -> Void) {
@@ -70,6 +71,7 @@ import Network
     }
 
     private func accept(_ connection: NWConnection) {
+        guard peers.count + closingPeers < 16 else { connection.cancel(); return }
         let id = UUID()
         let peer = Peer(connection)
         peers[id] = peer
@@ -97,10 +99,11 @@ import Network
                 guard let self, let peer = self.peers[id] else { return }
                 guard error == nil else { self.close(id); return }
                 let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
-                switch metadata?.opcode {
+                guard let metadata else { self.close(id); return }
+                switch metadata.opcode {
                 case .close: self.close(id); return
                 case .text:
-                    guard let data, let command = try? JSONDecoder().decode(Command.self, from: data) else {
+                    guard let data, let command = try? WireProtocol.decodeCommand(data) else {
                         if !peer.authed { self.close(id); return }
                         self.receive(id)
                         return
@@ -117,15 +120,21 @@ import Network
 
     private func handle(_ command: Command, from id: UUID) {
         guard let peer = peers[id] else { return }
-        if !peer.authed {
-            guard case .auth(let code) = command else { close(id); return }
-            guard code == session.code else { close(id, reason: "badauth"); return }
+        if case .auth(let code) = command {
+            guard session.authorize(code) else { close(id, reason: "badauth"); return }
+            if peer.authed {
+                guard session.isActivePeer(id: id) else { close(id); return }
+                send(.status, to: id)
+                return
+            }
             if let active { close(active, reason: "displaced") }
             active = id
             peer.authed = true
             peer.authTimeout?.cancel()
             peer.lastPong = .now
-            session.peer = "\(peer.connection.endpoint)"
+            session.claimPeer(id: id, name: "\(peer.connection.endpoint)") { [weak self] in
+                self?.close(id, reason: "displaced")
+            }
             send(.status, to: id)
             peer.heartbeat = Task { [weak self] in
                 while !Task.isCancelled {
@@ -140,15 +149,14 @@ import Network
             }
             return
         }
-        guard active == id else { return }
+        guard peer.authed else { close(id); return }
+        guard active == id, session.isActivePeer(id: id) else { return }
         switch command {
         case .auth: return
         case .move(let dx, let dy):
             guard dx.isFinite, dy.isFinite, abs(dx) <= 400, abs(dy) <= 400 else { return }
-            peer.moves += 1
-            if peer.moves % 200 == 0 { print("MOVES \(peer.moves)") }
         case .scroll(let dx, let dy):
-            guard dx.isFinite, dy.isFinite else { return }
+            guard dx.isFinite, dy.isFinite, abs(dx) <= 400, abs(dy) <= 400 else { return }
         default: break
         }
         onCommand(command)
@@ -172,9 +180,15 @@ import Network
 
     private func send(_ reply: Reply, to id: UUID) {
         guard let peer = peers[id], let data = try? JSONEncoder().encode(reply) else { return }
+        guard peer.pendingReplies < 8 else { close(id); return }
+        peer.pendingReplies += 1
         let context = NWConnection.ContentContext(identifier: "reply", metadata: [NWProtocolWebSocket.Metadata(opcode: .text)])
         peer.connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { [weak self] error in
-            if error != nil { Task { @MainActor in self?.close(id) } }
+            Task { @MainActor in
+                guard let self else { return }
+                if let peer = self.peers[id] { peer.pendingReplies -= 1 }
+                if error != nil { self.close(id) }
+            }
         })
     }
 
@@ -182,12 +196,14 @@ import Network
         guard let peer = peers.removeValue(forKey: id) else { return }
         peer.authTimeout?.cancel()
         peer.heartbeat?.cancel()
-        if active == id { active = nil; session.peer = nil }
+        if active == id { active = nil }
+        session.releasePeer(id: id)
         guard let reason, let data = try? JSONEncoder().encode(Reply.bye(reason: reason)) else {
             peer.connection.cancel()
             return
         }
         let connection = peer.connection
+        closingPeers += 1
         let context = NWConnection.ContentContext(identifier: "bye", metadata: [NWProtocolWebSocket.Metadata(opcode: .text)])
         connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in
             let metadata = NWProtocolWebSocket.Metadata(opcode: .close)
@@ -195,9 +211,10 @@ import Network
             let close = NWConnection.ContentContext(identifier: "close", metadata: [metadata])
             connection.send(content: nil, contentContext: close, isComplete: true, completion: .contentProcessed { _ in connection.cancel() })
         })
-        Task {
+        Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
             connection.cancel()
+            if let self { self.closingPeers -= 1 }
         }
     }
 }

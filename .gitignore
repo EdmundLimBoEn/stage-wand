@@ -16,5 +16,6 @@ host/arch/pkg/
 host/arch/src/
 host/arch/*.pkg.tar.*
 host/arch/*.log
+host/debian/*.deb
 
 android/.kotlin/

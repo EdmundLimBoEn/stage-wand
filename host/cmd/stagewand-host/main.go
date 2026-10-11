@@ -3,10 +3,11 @@ package main
 import (
 	"bufio"
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"math/big"
 	"os"
 	"os/signal"
 	"strings"
@@ -49,10 +50,19 @@ func main() {
 		code = "0000"
 	}
 	if code == "" {
-		code = randomCode()
+		var err error
+		code, err = generateCode(rand.Reader, "")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot generate pairing code: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if !validCode(code) {
+		fmt.Fprintln(os.Stderr, "Pairing code must contain exactly four ASCII digits")
+		os.Exit(2)
 	}
 
-	injector, injectNote := openInjector(*serve || *dryRun)
+	injector, _ := openInjector(*serve || *dryRun)
 	defer injector.Close()
 
 	session := server.NewSession(code)
@@ -79,6 +89,11 @@ func main() {
 		fmt.Printf("PORT %d\n", port)
 		os.Stdout.Sync()
 	}
+	if *jsonStatus {
+		ready, note := injector.Ready()
+		data, _ := json.Marshal(desktopStatus(session, lan.IPv4(), port, ready, note, "starting", "starting"))
+		fmt.Println(string(data))
+	}
 
 	advert, mdnsErr := mdns.Advertise(*name, port)
 	if advert != nil {
@@ -104,11 +119,6 @@ func main() {
 		return
 	}
 
-	ready, readyNote := injector.Ready()
-	if injectNote != "" {
-		readyNote = injectNote
-	}
-	ip := lan.IPv4()
 	mdnsNote := "advertised _stagewand._tcp"
 	if mdnsErr != nil {
 		mdnsNote = "unavailable (" + mdnsErr.Error() + "); use manual host:port"
@@ -118,6 +128,8 @@ func main() {
 	redraw := func() {
 		outputMu.Lock()
 		defer outputMu.Unlock()
+		ready, readyNote := injector.Ready()
+		ip := lan.IPv4()
 		var snap string
 		if *jsonStatus {
 			data, _ := json.Marshal(desktopStatus(session, ip, port, ready, readyNote, mdnsNote, bleDev.Note()))
@@ -146,13 +158,15 @@ func main() {
 func openInjector(logOnly bool) (input.Injector, string) {
 	probe := input.Diagnose()
 	if logOnly {
-		return input.Logging{}, "dry-run (commands logged, not injected); session " + string(probe.Session)
+		note := "dry-run (no input injection); session " + string(probe.Session)
+		return unavailableInput{reason: note}, note
 	}
 	injector, err := input.OpenOrError()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "input injection unavailable: %v\n", err)
-		fmt.Fprintf(os.Stderr, "continuing in dry-run. See README Linux host for Arch uinput setup.\n")
-		return input.Logging{}, "dry-run: " + probe.Hint
+		fmt.Fprintln(os.Stderr, "continuing without input injection. See README host setup and --diagnose.")
+		note := "unavailable: " + err.Error()
+		return unavailableInput{reason: note}, note
 	}
 	_, note := injector.Ready()
 	return injector, note
@@ -207,17 +221,49 @@ func applySelfTest(injector input.Injector) error {
 	return nil
 }
 
-func randomCode() string {
-	var n uint32
-	if err := binary.Read(rand.Reader, binary.LittleEndian, &n); err != nil {
-		return "0000"
+type unavailableInput struct {
+	input.Logging
+	reason string
+}
+
+func (u unavailableInput) Ready() (bool, string) { return false, u.reason }
+
+func validCode(code string) bool {
+	if len(code) != 4 {
+		return false
 	}
-	return fmt.Sprintf("%04d", n%10000)
+	for _, digit := range code {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func generateCode(reader io.Reader, previous string) (string, error) {
+	choices := int64(10000)
+	if validCode(previous) {
+		choices--
+	}
+	n, err := rand.Int(reader, big.NewInt(choices))
+	if err != nil {
+		return "", err
+	}
+	value := n.Int64()
+	if validCode(previous) {
+		var old int64
+		fmt.Sscanf(previous, "%d", &old)
+		if value >= old {
+			value++
+		}
+	}
+	return fmt.Sprintf("%04d", value), nil
 }
 
 func waitSignal() {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(ch)
 	<-ch
 }
 
@@ -226,7 +272,12 @@ func stdinKick(session *server.Session, srv *server.Server, bleDev ble.Periphera
 	for scanner.Scan() {
 		line := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		if line == "k" || line == "kick" {
-			session.SetCode(randomCode())
+			code, err := generateCode(rand.Reader, session.Code())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Cannot rotate pairing code: %v\n", err)
+				continue
+			}
+			session.SetCode(code)
 			srv.Kick()
 			bleDev.Kick()
 			redraw()

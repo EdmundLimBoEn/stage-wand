@@ -14,10 +14,10 @@ type Hooks struct {
 }
 
 type Action struct {
-	Notify    []byte
-	Broadcast bool
-	Drop      string
-	Reason    string
+	Notify []byte
+	Client string
+	Drop   string
+	Reason string
 }
 
 type Session struct {
@@ -26,6 +26,7 @@ type Session struct {
 	operations sync.Mutex
 	authed     string
 	owner      *control.Owner
+	closed     bool
 }
 
 func NewSession(hooks Hooks) *Session {
@@ -43,6 +44,10 @@ func NewSession(hooks Hooks) *Session {
 
 func (s *Session) Handle(client string, payload []byte) []Action {
 	s.operations.Lock()
+	if s.closed {
+		s.operations.Unlock()
+		return nil
+	}
 	actions, revoke := s.handle(client, payload)
 	if len(actions) > 0 {
 		s.hooks.OnActions(actions)
@@ -75,20 +80,16 @@ func (s *Session) handle(client string, payload []byte) ([]Action, func()) {
 			}
 			s.authed, s.owner = "", nil
 			s.mu.Unlock()
-			s.hooks.OnActions([]Action{{Notify: mustReply(protocol.Bye{Reason: reason}), Broadcast: true}, {Drop: client}})
+			s.hooks.OnActions([]Action{{Notify: mustReply(protocol.Bye{Reason: reason}), Client: client}, {Drop: client}})
 		}
 		accepted, revoke := s.hooks.Control.Claim(auth.Code, owner)
 		if !accepted {
-			idle := s.authed == ""
 			if s.authed == client {
 				s.hooks.Control.Release(s.owner)
 				s.authed, s.owner = "", nil
 			}
 			s.mu.Unlock()
-			if idle {
-				return []Action{{Notify: mustReply(protocol.Bye{Reason: protocol.ReasonBadAuth}), Broadcast: true}}, nil
-			}
-			return []Action{{Drop: client}}, nil
+			return []Action{{Notify: mustReply(protocol.Bye{Reason: protocol.ReasonBadAuth}), Client: client, Drop: client}}, nil
 		}
 		old := s.authed
 		s.authed, s.owner = client, owner
@@ -97,15 +98,18 @@ func (s *Session) handle(client string, payload []byte) ([]Action, func()) {
 		if old != "" && old != client {
 			actions = append(actions, Action{Drop: old, Reason: protocol.ReasonDisplaced})
 		}
-		return append(actions, Action{Notify: mustReply(protocol.Status{})}), revoke
+		return append(actions, Action{Notify: mustReply(protocol.Status{}), Client: client}), revoke
 	}
 	if s.authed != client {
 		s.mu.Unlock()
-		return nil, nil
+		return []Action{{Drop: client, Reason: protocol.ReasonBadAuth}}, nil
 	}
 	owner := s.owner
 	s.mu.Unlock()
 	if move, ok := command.(protocol.Move); ok && !protocol.MoveInRange(move.Dx, move.Dy) {
+		return nil, nil
+	}
+	if scroll, ok := command.(protocol.Scroll); ok && !protocol.MoveInRange(scroll.Dx, scroll.Dy) {
 		return nil, nil
 	}
 	s.hooks.Control.Dispatch(owner, func() { s.hooks.OnCommand(command) })
@@ -115,6 +119,17 @@ func (s *Session) handle(client string, payload []byte) ([]Action, func()) {
 func (s *Session) Kick() []Action {
 	s.operations.Lock()
 	defer s.operations.Unlock()
+	return s.kick()
+}
+
+func (s *Session) Close() {
+	s.operations.Lock()
+	defer s.operations.Unlock()
+	s.closed = true
+	s.kick()
+}
+
+func (s *Session) kick() []Action {
 	s.mu.Lock()
 	authed, owner := s.authed, s.owner
 	s.authed, s.owner = "", nil
@@ -123,7 +138,7 @@ func (s *Session) Kick() []Action {
 	if authed == "" {
 		return nil
 	}
-	actions := []Action{{Notify: mustReply(protocol.Bye{Reason: protocol.ReasonKicked}), Broadcast: true}, {Drop: authed}}
+	actions := []Action{{Notify: mustReply(protocol.Bye{Reason: protocol.ReasonKicked}), Client: authed}, {Drop: authed}}
 	s.hooks.OnActions(actions)
 	return actions
 }
