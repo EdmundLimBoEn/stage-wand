@@ -26,7 +26,7 @@ fi
 grep -q 'uaccess' "$readme" || fail "README must mention uaccess"
 
 pkgbuild="$root/host/arch/PKGBUILD"
-grep -q "makedepends=('go>=1.26.8' 'gcc' 'cmake')" "$pkgbuild" || fail "PKGBUILD must require the supported Go toolchain and core/gcc"
+grep -q "makedepends=('go>=1.26.9' 'gcc' 'cmake')" "$pkgbuild" || fail "PKGBUILD must require the supported Go toolchain and core/gcc"
 grep -q -- '-buildvcs=false' "$pkgbuild" || fail "PKGBUILD must set -buildvcs=false"
 for dep in ydotool xdotool libei; do
   if grep -q "$dep" "$pkgbuild"; then
