@@ -1,6 +1,8 @@
 # Hosted TestFlight path for the Stage Wand iOS remote, modelled on
 # Lazy Man's Reminders' ios-testflight.yml (same secret names, same
-# macos-26 / stable Xcode 26.6 pair, same API-key-driven signing and `asc`).
+# macos-26 / stable Xcode 26.6 pair, same API key and `asc`). Signing is manual:
+# scripts/asc-appstore-profile.py finds or creates an App Store profile for the
+# imported Apple Distribution certificate through the App Store Connect API.
 #
 # Skips cleanly (a notice, not a failure) until every secret and the
 # ASC_APP_ID variable below are set. See docs/testflight.md.
@@ -168,9 +170,28 @@ jobs:
           chmod 600 "${key_path}"
           echo "APP_STORE_CONNECT_API_KEY_PATH=${key_path}" >> "${GITHUB_ENV}"
 
-      # Sign the archive with the imported Apple Distribution identity. Without
-      # this, automatic signing on a fresh runner asks the API for a new Apple
-      # Development certificate every run.
+      - name: Install App Store provisioning profile
+        env:
+          APPSTORE_CERTIFICATES_FILE_BASE64: ${{ secrets.APPSTORE_CERTIFICATES_FILE_BASE64 }}
+          APPSTORE_CERTIFICATES_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATES_PASSWORD }}
+        run: |
+          set -euo pipefail
+          bundle_id="$(sed -nE 's/^[[:space:]]*PRODUCT_BUNDLE_IDENTIFIER:[[:space:]]*([^[:space:]]+).*/\1/p' ios/project.yml | head -n1)"
+          echo "BUNDLE_ID=${bundle_id}" >> "${GITHUB_ENV}"
+          p12="${RUNNER_TEMP}/distribution.p12"
+          cert_pem="${RUNNER_TEMP}/distribution.pem"
+          python3 -c 'import base64,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(os.environ["APPSTORE_CERTIFICATES_FILE_BASE64"]))' "${p12}"
+          if ! openssl pkcs12 -in "${p12}" -nokeys -clcerts -passin env:APPSTORE_CERTIFICATES_PASSWORD 2>/dev/null \
+              | openssl x509 -out "${cert_pem}" 2>/dev/null; then
+            openssl pkcs12 -legacy -in "${p12}" -nokeys -clcerts -passin env:APPSTORE_CERTIFICATES_PASSWORD \
+              | openssl x509 -out "${cert_pem}"
+          fi
+          rm -f "${p12}"
+          DISTRIBUTION_CERT_PEM="${cert_pem}" python3 scripts/asc-appstore-profile.py "${bundle_id}"
+
+      # Manual signing with the imported Apple Distribution identity and the
+      # profile above. Automatic signing on a fresh runner would ask the API
+      # for a new Apple Development certificate on every run.
       - name: Archive Release
         working-directory: ios
         run: |
@@ -184,12 +205,9 @@ jobs:
             -configuration Release \
             -destination "generic/platform=iOS" \
             -archivePath "${archive_path}" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "${APP_STORE_CONNECT_API_KEY_PATH}" \
-            -authenticationKeyID "${ASC_KEY_ID}" \
-            -authenticationKeyIssuerID "${ASC_ISSUER_ID}" \
-            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="${PROFILE_NAME}" \
             DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" \
             CURRENT_PROJECT_VERSION="${build_number}"
 
@@ -217,7 +235,14 @@ jobs:
             <key>destination</key>
             <string>export</string>
             <key>signingStyle</key>
-            <string>automatic</string>
+            <string>manual</string>
+            <key>signingCertificate</key>
+            <string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${BUNDLE_ID}</key>
+              <string>${PROFILE_NAME}</string>
+            </dict>
             <key>teamID</key>
             <string>${APPLE_TEAM_ID}</string>
             <key>uploadSymbols</key>

@@ -10,7 +10,7 @@ Stage Wand is not going to the App Store: the locked-screen volume-button contro
 
 1. A `gate` job checks the secrets and the `ASC_APP_ID` variable. If any are missing, it posts a notice and the upload job is **skipped**, not failed.
 2. On `macos-26` with stable Xcode 26.6, it runs `scripts/apple-swift-checks.sh` (the same Swift protocol, queue, URL, unlock, session and Bluetooth checks as cross-platform CI). It then generates the project with XcodeGen and imports the Apple Distribution certificate.
-3. `xcodebuild archive` with automatic signing through the App Store Connect API key (`-allowProvisioningUpdates`). `CURRENT_PROJECT_VERSION` = `<run number>.<run attempt>`, so the build number always increases. Export also sets `manageAppVersionAndBuildNumber`, so App Store Connect can raise it further if a number was already used.
+3. `scripts/asc-appstore-profile.py` finds or creates an App Store provisioning profile (`Stage Wand App Store CI <cert id>`) for the imported Apple Distribution certificate through the API, then `xcodebuild archive` signs manually with it. (Automatic signing on a fresh runner would mint a new Apple Development certificate every run.) `CURRENT_PROJECT_VERSION` = `<run number>.<run attempt>`, so the build number always increases. Export also sets `manageAppVersionAndBuildNumber`, so App Store Connect can raise it further if a number was already used.
 4. It checks that the archive contains the privacy manifest and the compiled app icon, then exports an App Store Connect IPA.
 5. `asc builds upload --wait --test-notes …` uploads the build, waits for processing and sets *What to Test*.
 6. **Optional external step:** if the repository variable `TESTFLIGHT_EXTERNAL_GROUP` is set (and the manual run's *external* box is ticked), it runs `asc builds add-groups --group "$TESTFLIGHT_EXTERNAL_GROUP" --submit --confirm`. That adds the build to the external group and submits it to Beta App Review. When the variable is unset this step does nothing.
@@ -46,7 +46,7 @@ base64 -i AppleDistribution.p12 | gh secret set APPSTORE_CERTIFICATES_FILE_BASE6
 gh secret set APPSTORE_CERTIFICATES_PASSWORD -R $R
 gh variable set ASC_APP_ID -R $R --body <numeric Apple ID>
 ```
-The Apple Distribution certificate is per team, so the `.p12` already used for LMR (team DUU8J39BA7) works here. The API key needs the **Admin** role (or App Manager with access to certificates/profiles) so `-allowProvisioningUpdates` can create the App Store profile. The key LMR uses already works for this.
+The Apple Distribution certificate is per team, so the `.p12` already used for LMR (team DUU8J39BA7) works here. The API key needs the **Admin** role (or App Manager with access to certificates/profiles) so CI can create the App Store profile. The key LMR uses already works for this.
 
 ### 4. Internal testing
 TestFlight → Internal Testing → **+** → group `Team`, tick *Enable automatic distribution*, add yourself. Every processed build then reaches your phone with no review.
