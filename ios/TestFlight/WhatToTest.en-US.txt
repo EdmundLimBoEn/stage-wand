@@ -1,0 +1,10 @@
+Stage Wand turns this iPhone into a presentation remote for a computer you own. You need the free Stage Wand host running on a Mac (macOS 14+), Windows or Linux PC: https://github.com/EdmundLimBoEn/stage-wand
+
+Please try:
+1. Pairing: start the host, open Stage Wand, draw the square to unlock, open Settings and type the 4-digit code the computer shows.
+2. Bluetooth direct and Wi-Fi: try both transports in Settings. Note which one you used.
+3. Slides: open Keynote, PowerPoint or Google Slides on the computer. Use Next / Previous, then the iPhone volume buttons (up = next, down = previous), including with the phone locked.
+4. Pointer: trackpad drag, tap to click, two-finger scroll.
+5. Recovery: lock/unlock the phone, walk out of range and back, toggle Wi-Fi/Bluetooth. Does it reconnect without replaying old presses?
+
+Report: phone model + iOS version, computer + OS, transport, and what broke. Use TestFlight's screenshot feedback or the feedback email.

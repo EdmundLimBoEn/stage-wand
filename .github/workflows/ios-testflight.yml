@@ -1,0 +1,319 @@
+# Hosted TestFlight path for the Stage Wand iOS remote, modelled on
+# Lazy Man's Reminders' ios-testflight.yml (same secret names, same
+# macos-26 / stable Xcode 26.6 pair, same API key and `asc`). Signing is manual:
+# scripts/asc-appstore-profile.py finds or creates an App Store profile for the
+# imported Apple Distribution certificate through the App Store Connect API.
+#
+# Skips cleanly (a notice, not a failure) until every secret and the
+# ASC_APP_ID variable below are set. See docs/testflight.md.
+#
+# Repository secrets (never commit the values, .p8 or .p12 files):
+#   ASC_KEY_ID                          App Store Connect API Key ID
+#   ASC_ISSUER_ID                       App Store Connect Issuer ID
+#   ASC_PRIVATE_KEY_B64                 base64 of the AuthKey_*.p8 (Admin or App Manager role)
+#   APPSTORE_CERTIFICATES_FILE_BASE64   base64 of the Apple Distribution .p12
+#   APPSTORE_CERTIFICATES_PASSWORD      password for that .p12
+# Repository variables (public identifiers, Settings → Variables):
+#   ASC_APP_ID                  numeric Apple ID of the Stage Wand app record (required)
+#   TESTFLIGHT_EXTERNAL_GROUP   external beta group name, e.g. "Public Testers" (optional).
+#                               When set, each processed build is added to that group and
+#                               submitted for Beta App Review. Unset = internal testers only.
+#
+# Build numbers: CFBundleVersion is <run number>.<run attempt>, which only
+# grows. Export also sets manageAppVersionAndBuildNumber so App Store Connect
+# can raise it if that number was already used.
+
+name: iOS TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: "Upload to App Store Connect (untick for an archive + export dry run; needs no ASC_APP_ID)"
+        type: boolean
+        default: true
+      external:
+        description: "Also submit to the external group in TESTFLIGHT_EXTERNAL_GROUP (if set)"
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "Shared/**"
+      - ".github/workflows/ios-testflight.yml"
+      - "scripts/apple-swift-checks.sh"
+  # PRs only run the gate (never sign or upload). This also registers the
+  # workflow so it can be dispatched on a branch before it reaches main.
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - ".github/workflows/ios-testflight.yml"
+
+concurrency:
+  group: ios-testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    name: Check TestFlight configuration
+    runs-on: ubuntu-latest
+    if: github.repository == 'EdmundLimBoEn/stage-wand'
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+      upload: ${{ steps.check.outputs.upload }}
+    steps:
+      - id: check
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY_B64: ${{ secrets.ASC_PRIVATE_KEY_B64 }}
+          APPSTORE_CERTIFICATES_FILE_BASE64: ${{ secrets.APPSTORE_CERTIFICATES_FILE_BASE64 }}
+          APPSTORE_CERTIFICATES_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATES_PASSWORD }}
+          ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+          UPLOAD: ${{ github.event_name != 'workflow_dispatch' || inputs.upload }}
+        run: |
+          set -euo pipefail
+          required=(ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY_B64 \
+            APPSTORE_CERTIFICATES_FILE_BASE64 APPSTORE_CERTIFICATES_PASSWORD)
+          if [ "${UPLOAD}" = "true" ]; then required+=(ASC_APP_ID); fi
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+            echo "upload=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Pull requests never sign or upload; run this workflow by hand or push to main."
+            exit 0
+          fi
+          echo "upload=${UPLOAD}" >> "${GITHUB_OUTPUT}"
+          missing=()
+          for name in "${required[@]}"
+          do
+            if [ -z "${!name:-}" ]; then missing+=("${name}"); fi
+          done
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "ready=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Skipping TestFlight upload; not configured yet (missing: ${missing[*]}). See docs/testflight.md."
+          fi
+
+  testflight:
+    name: Archive and upload to TestFlight
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      APPLE_TEAM_ID: "DUU8J39BA7"
+      ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+      TESTFLIGHT_EXTERNAL_GROUP: ${{ (github.event_name != 'workflow_dispatch' || inputs.external) && vars.TESTFLIGHT_EXTERNAL_GROUP || '' }}
+      ASC_BYPASS_KEYCHAIN: "1"
+      ASC_NO_UPDATE: "1"
+      ASC_UPLOAD_TIMEOUT: 15m
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY_B64: ${{ secrets.ASC_PRIVATE_KEY_B64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.6"
+
+      - name: Verify submission toolchain
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "iOS SDK ${sdk}"
+          case "$(xcode-select -p)" in *[Bb]eta*) echo "::error::Beta Xcode selected"; exit 1;; esac
+          if [ "${sdk%%.*}" -lt 26 ]; then
+            echo "::error::App Store Connect requires the iOS 26 SDK or later"
+            exit 1
+          fi
+
+      - name: Shared Swift checks (protocol, queue, URL, unlock, session, Bluetooth)
+        run: bash scripts/apple-swift-checks.sh
+
+      - name: Install XcodeGen
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install xcodegen
+
+      - name: Install asc
+        uses: rudrankriyam/setup-asc@v1
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate --spec project.yml
+
+      - name: Import Apple Distribution certificate
+        uses: apple-actions/import-codesign-certs@v7
+        with:
+          p12-file-base64: ${{ secrets.APPSTORE_CERTIFICATES_FILE_BASE64 }}
+          p12-password: ${{ secrets.APPSTORE_CERTIFICATES_PASSWORD }}
+
+      - name: Write App Store Connect API key
+        run: |
+          set -euo pipefail
+          key_dir="${RUNNER_TEMP}/private_keys"
+          mkdir -p "${key_dir}"
+          key_path="${key_dir}/AuthKey_${ASC_KEY_ID}.p8"
+          python3 -c 'import base64,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(os.environ["ASC_PRIVATE_KEY_B64"]))' "${key_path}"
+          chmod 600 "${key_path}"
+          echo "APP_STORE_CONNECT_API_KEY_PATH=${key_path}" >> "${GITHUB_ENV}"
+
+      - name: Install App Store provisioning profile
+        env:
+          APPSTORE_CERTIFICATES_FILE_BASE64: ${{ secrets.APPSTORE_CERTIFICATES_FILE_BASE64 }}
+          APPSTORE_CERTIFICATES_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATES_PASSWORD }}
+        run: |
+          set -euo pipefail
+          bundle_id="$(sed -nE 's/^[[:space:]]*PRODUCT_BUNDLE_IDENTIFIER:[[:space:]]*([^[:space:]]+).*/\1/p' ios/project.yml | head -n1)"
+          echo "BUNDLE_ID=${bundle_id}" >> "${GITHUB_ENV}"
+          p12="${RUNNER_TEMP}/distribution.p12"
+          cert_pem="${RUNNER_TEMP}/distribution.pem"
+          python3 -c 'import base64,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(os.environ["APPSTORE_CERTIFICATES_FILE_BASE64"]))' "${p12}"
+          if ! openssl pkcs12 -in "${p12}" -nokeys -clcerts -passin env:APPSTORE_CERTIFICATES_PASSWORD 2>/dev/null \
+              | openssl x509 -out "${cert_pem}" 2>/dev/null; then
+            openssl pkcs12 -legacy -in "${p12}" -nokeys -clcerts -passin env:APPSTORE_CERTIFICATES_PASSWORD \
+              | openssl x509 -out "${cert_pem}"
+          fi
+          rm -f "${p12}"
+          DISTRIBUTION_CERT_PEM="${cert_pem}" python3 scripts/asc-appstore-profile.py "${bundle_id}"
+
+      # Manual signing with the imported Apple Distribution identity and the
+      # profile above. Automatic signing on a fresh runner would ask the API
+      # for a new Apple Development certificate on every run.
+      - name: Archive Release
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          archive_path="${RUNNER_TEMP}/StageWand.xcarchive"
+          build_number="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          echo "ARCHIVE_PATH=${archive_path}" >> "${GITHUB_ENV}"
+          xcodebuild archive \
+            -project StageWand.xcodeproj \
+            -scheme StageWand \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "${archive_path}" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="${PROFILE_NAME}" \
+            DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" \
+            CURRENT_PROJECT_VERSION="${build_number}"
+
+      - name: Check archived app metadata
+        run: |
+          set -euo pipefail
+          app="${ARCHIVE_PATH}/Products/Applications/StageWand.app"
+          plutil -p "${app}/Info.plist" | grep -E 'CFBundle(Identifier|ShortVersionString|Version)|DTSDKName|ITSAppUsesNonExemptEncryption|MinimumOSVersion'
+          test -f "${app}/PrivacyInfo.xcprivacy" || { echo "::error::PrivacyInfo.xcprivacy missing from the app bundle"; exit 1; }
+          test -f "${app}/Assets.car" || { echo "::error::Compiled asset catalog (app icon) missing"; exit 1; }
+
+      - name: Export IPA for App Store Connect
+        run: |
+          set -euo pipefail
+          export_path="${RUNNER_TEMP}/ipa"
+          options_path="${RUNNER_TEMP}/ExportOptions.plist"
+          mkdir -p "${export_path}"
+          cat > "${options_path}" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>destination</key>
+            <string>export</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>signingCertificate</key>
+            <string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${BUNDLE_ID}</key>
+              <string>${PROFILE_NAME}</string>
+            </dict>
+            <key>teamID</key>
+            <string>${APPLE_TEAM_ID}</string>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <true/>
+            <key>stripSwiftSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "${ARCHIVE_PATH}" \
+            -exportPath "${export_path}" \
+            -exportOptionsPlist "${options_path}" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "${APP_STORE_CONNECT_API_KEY_PATH}" \
+            -authenticationKeyID "${ASC_KEY_ID}" \
+            -authenticationKeyIssuerID "${ASC_ISSUER_ID}"
+          ipa_path="$(find "${export_path}" -name '*.ipa' -print -quit)"
+          if [ -z "${ipa_path}" ]; then
+            echo "::error::Export succeeded but no IPA was produced."
+            ls -la "${export_path}"
+            exit 1
+          fi
+          echo "IPA_PATH=${ipa_path}" >> "${GITHUB_ENV}"
+
+      - name: Read exported version and build number
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, plistlib, zipfile
+          with zipfile.ZipFile(os.environ["IPA_PATH"]) as ipa:
+              info = plistlib.loads(ipa.read("Payload/StageWand.app/Info.plist"))
+          version, build = info["CFBundleShortVersionString"], info["CFBundleVersion"]
+          print(f"Exported {info['CFBundleIdentifier']} {version} ({build})")
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"BUILT_VERSION={version}\nBUILT_BUILD_NUMBER={build}\n")
+          PY
+
+      - name: Upload build to App Store Connect and wait for processing
+        if: needs.gate.outputs.upload == 'true'
+        run: |
+          set -euo pipefail
+          notes="$(cat ios/TestFlight/WhatToTest.en-US.txt; printf '\nBuild from commit %s.\n' "${GITHUB_SHA::12}")"
+          asc builds upload --app "${ASC_APP_ID}" --ipa "${IPA_PATH}" \
+            --wait --test-notes "${notes}" --locale en-US
+
+      - name: Add to external group and submit for Beta App Review
+        if: needs.gate.outputs.upload == 'true' && env.TESTFLIGHT_EXTERNAL_GROUP != ''
+        run: |
+          set -euo pipefail
+          asc builds add-groups --app "${ASC_APP_ID}" \
+            --build-number "${BUILT_BUILD_NUMBER}" --version "${BUILT_VERSION}" --platform IOS \
+            --group "${TESTFLIGHT_EXTERNAL_GROUP}" --submit --confirm
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Stage Wand TestFlight"
+            echo "- Version: ${BUILT_VERSION:-?} (${BUILT_BUILD_NUMBER:-?})"
+            if [ "${{ needs.gate.outputs.upload }}" != "true" ]; then
+              echo "- Dry run: archived and exported, not uploaded"
+            elif [ -n "${TESTFLIGHT_EXTERNAL_GROUP}" ]; then
+              echo "- External group: ${TESTFLIGHT_EXTERNAL_GROUP} (submitted for Beta App Review)"
+            else
+              echo "- Internal testers only (TESTFLIGHT_EXTERNAL_GROUP not set)"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Remove API key
+        if: always()
+        run: rm -rf "${RUNNER_TEMP}/private_keys"
