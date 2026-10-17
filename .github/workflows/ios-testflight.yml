@@ -41,6 +41,12 @@ on:
       - "Shared/**"
       - ".github/workflows/ios-testflight.yml"
       - "scripts/apple-swift-checks.sh"
+  # PRs only run the gate (never sign or upload). This also registers the
+  # workflow so it can be dispatched on a branch before it reaches main.
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - ".github/workflows/ios-testflight.yml"
 
 concurrency:
   group: ios-testflight-${{ github.ref }}
@@ -76,6 +82,12 @@ jobs:
           required=(ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY_B64 \
             APPSTORE_CERTIFICATES_FILE_BASE64 APPSTORE_CERTIFICATES_PASSWORD)
           if [ "${UPLOAD}" = "true" ]; then required+=(ASC_APP_ID); fi
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+            echo "upload=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Pull requests never sign or upload; run this workflow by hand or push to main."
+            exit 0
+          fi
           echo "upload=${UPLOAD}" >> "${GITHUB_OUTPUT}"
           missing=()
           for name in "${required[@]}"
