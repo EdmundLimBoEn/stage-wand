@@ -1,0 +1,237 @@
+# Signed, notarized and stapled macOS DMG for the Stage Wand host.
+#
+# Release path: push a tag `mac-v<version>` (for example `mac-v0.2.0`), or run
+# this workflow by hand with a version. The job signs StageWandMac.app with the
+# team's Developer ID Application certificate (hardened runtime), notarizes and
+# staples the app, builds a DMG, signs/notarizes/staples the DMG, verifies both
+# with stapler and spctl, then attaches the DMG to the GitHub Release
+# `mac-v<version>`. It fails loudly if any secret is missing: it never ships
+# an unsigned DMG.
+#
+# Pull requests only build an ad-hoc-signed DMG to prove packaging still
+# works. They never see secrets, so forks and PRs stay green without them.
+#
+# Repository secrets (never commit the values, .p12 or .p8 files):
+#   DEVELOPER_ID_CERTIFICATE_P12_BASE64  base64 of the Developer ID Application .p12
+#   DEVELOPER_ID_CERTIFICATE_PASSWORD    password for that .p12
+#   ASC_KEY_ID                           App Store Connect API Key ID (shared with ios-testflight.yml)
+#   ASC_ISSUER_ID                        App Store Connect Issuer ID
+#   ASC_PRIVATE_KEY_B64                  base64 of the AuthKey_*.p8
+# Team DUU8J39BA7 is a public identifier. See docs/macos-release.md.
+
+name: macOS release
+
+on:
+  push:
+    tags: ["mac-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Marketing version, e.g. 0.2.0"
+        required: true
+        type: string
+      publish:
+        description: "Create/update the GitHub Release mac-v<version> with the notarized DMG"
+        required: false
+        default: false
+        type: boolean
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "mac/**"
+      - "scripts/mac-release.sh"
+      - ".github/workflows/mac-release.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  unsigned-dmg:
+    name: DMG packaging (ad-hoc, PR only)
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build an ad-hoc-signed DMG
+        env:
+          VERSION: 0.0.0
+          BUILD_NUMBER: ${{ github.run_number }}
+          SIGN_IDENTITY: "-"
+          OUT_DIR: ${{ runner.temp }}/dist
+        run: ./scripts/mac-release.sh
+      - name: Check the packaged app
+        run: |
+          set -euo pipefail
+          mount_dir="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "${mount_dir}" "${DMG_PATH}"
+          app="${mount_dir}/StageWandMac.app"
+          codesign --verify --strict --deep --verbose=2 "${app}"
+          codesign --display --verbose=2 "${app}" 2>&1 | grep -q 'flags=.*runtime' || { echo "::error::Hardened runtime flag missing"; exit 1; }
+          plutil -p "${app}/Contents/Info.plist"
+          lipo -archs "${app}/Contents/MacOS/StageWandMac" | grep -q x86_64
+          lipo -archs "${app}/Contents/MacOS/StageWandMac" | grep -q 'arm64'
+          hdiutil detach "${mount_dir}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stagewand-mac-unsigned
+          path: ${{ runner.temp }}/dist/*
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    name: Developer ID sign, notarize, staple
+    if: github.event_name != 'pull_request' && github.repository == 'EdmundLimBoEn/stage-wand'
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      APPLE_TEAM_ID: "DUU8J39BA7"
+      DEVELOPER_ID_CERTIFICATE_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12_BASE64 }}
+      DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY_B64: ${{ secrets.ASC_PRIVATE_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require signing and notarization secrets
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            DEVELOPER_ID_CERTIFICATE_P12_BASE64 \
+            DEVELOPER_ID_CERTIFICATE_PASSWORD \
+            ASC_KEY_ID \
+            ASC_ISSUER_ID \
+            ASC_PRIVATE_KEY_B64
+          do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required secret ${name}. See docs/macos-release.md. Refusing to ship an unsigned DMG."
+              missing=1
+            fi
+          done
+          exit "${missing}"
+
+      - name: Resolve version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            version="${GITHUB_REF_NAME#mac-v}"
+            publish=true
+          else
+            version="${INPUT_VERSION}"
+            publish="${INPUT_PUBLISH}"
+          fi
+          if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "::error::Version '${version}' must look like 1.2 or 1.2.3"
+            exit 1
+          fi
+          {
+            echo "VERSION=${version}"
+            echo "BUILD_NUMBER=${GITHUB_RUN_NUMBER}"
+            echo "PUBLISH=${publish}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Import Developer ID certificate into a temporary keychain
+        run: |
+          set -euo pipefail
+          keychain="${RUNNER_TEMP}/stagewand-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          echo "::add-mask::${keychain_password}"
+          p12="${RUNNER_TEMP}/developer-id.p12"
+          python3 -c 'import base64,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(os.environ["DEVELOPER_ID_CERTIFICATE_P12_BASE64"]))' "${p12}"
+          curl -fsSL -o "${RUNNER_TEMP}/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security create-keychain -p "${keychain_password}" "${keychain}"
+          security set-keychain-settings -lut 21600 "${keychain}"
+          security unlock-keychain -p "${keychain_password}" "${keychain}"
+          security import "${RUNNER_TEMP}/DeveloperIDG2CA.cer" -k "${keychain}" -T /usr/bin/codesign || true
+          security import "${p12}" -k "${keychain}" -P "${DEVELOPER_ID_CERTIFICATE_PASSWORD}" -f pkcs12 \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "${p12}"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${keychain_password}" "${keychain}" >/dev/null
+          read -r -a existing <<< "$(security list-keychains -d user | tr -d '"' | tr '\n' ' ')"
+          security list-keychains -d user -s "${keychain}" "${existing[@]}"
+          identity="$(security find-identity -v -p codesigning "${keychain}" \
+            | awk -v team="(${APPLE_TEAM_ID})" '/Developer ID Application:/ && index($0, team) { print $2; exit }')"
+          if [ -z "${identity}" ]; then
+            echo "::error::DEVELOPER_ID_CERTIFICATE_P12_BASE64 has no valid 'Developer ID Application: ... (${APPLE_TEAM_ID})' identity with its private key."
+            security find-identity -v -p codesigning "${keychain}"
+            exit 1
+          fi
+          {
+            echo "KEYCHAIN=${keychain}"
+            echo "SIGN_IDENTITY=${identity}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Write App Store Connect API key
+        run: |
+          set -euo pipefail
+          key_dir="${RUNNER_TEMP}/private_keys"
+          mkdir -p "${key_dir}"
+          key_path="${key_dir}/AuthKey_${ASC_KEY_ID}.p8"
+          python3 -c 'import base64,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(os.environ["ASC_PRIVATE_KEY_B64"]))' "${key_path}"
+          chmod 600 "${key_path}"
+          echo "ASC_KEY_PATH=${key_path}" >> "${GITHUB_ENV}"
+
+      - name: Build, sign, notarize and staple
+        env:
+          NOTARIZE: "1"
+          OUT_DIR: ${{ runner.temp }}/dist
+        run: ./scripts/mac-release.sh
+
+      - name: Verify the shipped DMG from a clean mount
+        run: |
+          set -euo pipefail
+          xcrun stapler validate "${DMG_PATH}"
+          spctl --assess --type open --context context:primary-signature -vv "${DMG_PATH}"
+          mount_dir="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "${mount_dir}" "${DMG_PATH}"
+          app="${mount_dir}/StageWandMac.app"
+          codesign --verify --strict --deep --verbose=2 "${app}"
+          xcrun stapler validate "${app}"
+          spctl --assess --type execute -vv "${app}"
+          hdiutil detach "${mount_dir}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stagewand-mac-${{ env.VERSION }}
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: env.PUBLISH == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mac-v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: Stage Wand for macOS ${{ env.VERSION }}
+          make_latest: false
+          fail_on_unmatched_files: true
+          body: |
+            Developer ID–signed, notarized and stapled macOS host built from `${{ github.sha }}`.
+            [Build log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+            Open the DMG, drag **StageWandMac** to Applications, launch it, then allow Accessibility,
+            Bluetooth and Local Network when macOS asks. Requires macOS 14 or later (Apple silicon or Intel).
+          files: |
+            ${{ runner.temp }}/dist/StageWand-*.dmg
+            ${{ runner.temp }}/dist/StageWand-*.dmg.sha256
+
+      - name: Remove temporary keychain and API key
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN:-}" ]; then security delete-keychain "${KEYCHAIN}" || true; fi
+          rm -rf "${RUNNER_TEMP}/private_keys"

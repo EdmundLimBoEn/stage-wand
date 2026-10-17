@@ -19,3 +19,9 @@ host/arch/*.log
 host/debian/*.deb
 
 android/.kotlin/
+
+dist/
+*.p12
+*.p8
+*.cer
+*.mobileprovision

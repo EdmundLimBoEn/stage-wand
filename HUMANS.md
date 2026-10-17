@@ -20,6 +20,7 @@ For each row, test **both iPhone and Android**, over **Bluetooth and Wi-Fi**: pa
 - [ ] Debian: install the new `.deb` in a graphical session; test BlueZ, uinput after a fresh login/reboot, and the controls above.
 - [ ] Ubuntu: repeat the `.deb` checks on the oldest supported Ubuntu 22.04 baseline and a current supported desktop.
 - [ ] macOS: native build/signing and Accessibility/Bluetooth permissions, then both remotes and transports.
+- [ ] macOS DMG: create the Developer ID Application certificate and set the secrets in [docs/macos-release.md](docs/macos-release.md), push a `mac-v*` tag, then install the notarized DMG on a second Mac and confirm Gatekeeper opens it without a warning.
 - [ ] Windows: execute native WinRT and SendInput tests/build on Windows, verify both remotes and transports, and firewall/virtual-desktop behavior.
 - [ ] Every host: wrong code, five wrong attempts followed by the 30-second cooldown, Disconnect & new code, and successful recovery using the new code.
 - [ ] Every host: rapid Bluetooth/Wi-Fi handover between two phones; only the newest authenticated controller can inject. On Linux, second subscribers can see characteristic-wide notifications; ensure a rejected phone disconnects instead of remaining falsely connected.

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>systems.edmundlim.stagewand.mac</string>
+	<key>CFBundleName</key>
+	<string>StageWandMac</string>
+	<key>CFBundleDisplayName</key>
+	<string>Stage Wand</string>
+	<key>CFBundleExecutable</key>
+	<string>StageWandMac</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to Stage Wand on your phone</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Connect to Stage Wand on your phone over Bluetooth</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_stagewand._tcp</string>
+	</array>
+</dict>
+</plist>
