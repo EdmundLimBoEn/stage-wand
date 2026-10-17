@@ -28,6 +28,7 @@ For each row, test **both iPhone and Android**, over **Bluetooth and Wi-Fi**: pa
 - [ ] Windows: launch with Bluetooth disabled, enable it, and relaunch if the initial provider setup was unavailable. Test recovery from radio loss after a successful startup.
 - [ ] Both phones: locked-screen hardware volume keys for a full rehearsal. Android OEM background restrictions and iOS audio interruptions still need physical testing.
 - [ ] Release gates: run native macOS/iOS and Windows CI for this exact revision; simulator/fake-radio tests do not certify hardware interoperability.
+- [ ] iOS TestFlight: register the bundle ID, create the App Store Connect record, set the secrets/variables and Test Information in [docs/testflight.md](docs/testflight.md), then install a TestFlight build on a real iPhone.
 - [ ] Distribution: provide release signing/provisioning for the phone apps and choose a distribution license before a public packaged release. Android release builds currently produce an unsigned APK; do not distribute a debug build as a signed release.
 
 See [the release verification record](docs/release-readiness.md) for automated evidence and remaining limits.

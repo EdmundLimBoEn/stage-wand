@@ -7,6 +7,9 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     DEVELOPMENT_TEAM: DUU8J39BA7
     CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    # Floor only. ios-testflight.yml passes a higher run-based build number.
+    CURRENT_PROJECT_VERSION: "1"
 targets:
   StageWand:
     type: application
@@ -20,10 +23,23 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: systems.edmundlim.stagewand
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: build/Info.plist
       properties:
         CFBundleDisplayName: Stage Wand
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         CFBundleURLTypes:
           - CFBundleURLName: systems.edmundlim.stagewand
             CFBundleURLSchemes: [stagewand]
