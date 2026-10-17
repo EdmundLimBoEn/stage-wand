@@ -1,10 +1,16 @@
 name: Branch policy
 
+# feat/*, fix/* and chore/* go into dev; only dev goes into main.
+# Merging dev into main is the release (see docs/releasing.md).
+
 on:
   pull_request:
     branches:
       - main
       - dev
+
+permissions:
+  contents: read
 
 jobs:
   policy:
@@ -14,19 +20,24 @@ jobs:
         env:
           BASE: ${{ github.base_ref }}
           HEAD: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -euo pipefail
-          if [ "$BASE" = "main" ]; then
-            case "$HEAD" in
-              dev|hotfix/*) ;;
-              *)
-                echo "PRs into main must come from \`dev\` (promotion) or \`hotfix/*\`."
-                echo "Open this PR against \`dev\` instead."
+          case "$BASE" in
+            main)
+              if [ "$HEAD" != "dev" ] || [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+                echo "::error::PRs into main must come from this repository's \`dev\` branch (the release promotion). Open this PR against \`dev\` instead."
                 exit 1
-                ;;
-            esac
-          fi
-          if [ "$BASE" = "dev" ] && [ "$HEAD" = "main" ]; then
-            echo "Do not open PRs from main into dev."
-            exit 1
-          fi
+              fi
+              ;;
+            dev)
+              case "$HEAD" in
+                feat/*|fix/*|chore/*) ;;
+                *)
+                  echo "::error::PRs into dev must come from feat/*, fix/* or chore/* (got \`$HEAD\`). Rename the branch, e.g. \`git branch -m feat/<slug>\`."
+                  exit 1
+                  ;;
+              esac
+              ;;
+          esac
+          echo "OK: $HEAD -> $BASE"

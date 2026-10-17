@@ -1,12 +1,18 @@
 # Signed, notarized and stapled macOS DMG for the Stage Wand host.
 #
-# Release path: push a tag `mac-v<version>` (for example `mac-v0.2.0`), or run
-# this workflow by hand with a version. The job signs StageWandMac.app with the
-# team's Developer ID Application certificate (hardened runtime), notarizes and
-# staples the app, builds a DMG, signs/notarizes/staples the DMG, verifies both
-# with stapler and spctl, then attaches the DMG to the GitHub Release
-# `mac-v<version>`. It fails loudly if any secret is missing: it never ships
-# an unsigned DMG.
+# Release path: every push to main (dev merged into main). The version comes
+# from the VERSION file. If the GitHub Release mac-v<version> already exists,
+# the run skips with a notice (bump VERSION with scripts/version.sh set X.Y.Z
+# to ship a new DMG), so merges that don't change the version are no-ops.
+# Otherwise it signs StageWandMac.app with the team's Developer ID Application
+# certificate (hardened runtime), notarizes and staples the app, builds a DMG,
+# signs/notarizes/staples the DMG, verifies both with stapler and spctl, and
+# publishes the GitHub Release mac-v<version>. Missing secrets fail the run:
+# it never ships an unsigned DMG.
+#
+# Manual runs (workflow_dispatch, any branch) build and notarize the current
+# VERSION and upload it as an artifact; tick "publish" to also create the
+# release (fails if that tag already exists).
 #
 # Pull requests only build an ad-hoc-signed DMG to prove packaging still
 # works. They never see secrets, so forks and PRs stay green without them.
@@ -17,34 +23,34 @@
 #   ASC_KEY_ID                           App Store Connect API Key ID (shared with ios-testflight.yml)
 #   ASC_ISSUER_ID                        App Store Connect Issuer ID
 #   ASC_PRIVATE_KEY_B64                  base64 of the AuthKey_*.p8
-# Team DUU8J39BA7 is a public identifier. See docs/macos-release.md.
+# Team DUU8J39BA7 is a public identifier. See docs/releasing.md and docs/macos-release.md.
 
 name: macOS release
 
 on:
   push:
-    tags: ["mac-v*"]
+    branches: [main]
   workflow_dispatch:
     inputs:
-      version:
-        description: "Marketing version, e.g. 0.2.0"
-        required: true
-        type: string
       publish:
-        description: "Create/update the GitHub Release mac-v<version> with the notarized DMG"
+        description: "Also publish the GitHub Release mac-v<VERSION> (fails if it already exists)"
         required: false
         default: false
         type: boolean
   pull_request:
     branches: [main, dev]
     paths:
+      - "VERSION"
       - "mac/**"
       - "scripts/mac-release.sh"
+      - "scripts/version.sh"
       - ".github/workflows/mac-release.yml"
 
 permissions:
   contents: read
 
+# One release at a time per branch; a second main push waits for the first
+# (and then sees its tag) instead of racing it.
 concurrency:
   group: mac-release-${{ github.ref }}
   cancel-in-progress: false
@@ -61,9 +67,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Check version consistency
+        run: scripts/version.sh check
       - name: Build an ad-hoc-signed DMG
         env:
-          VERSION: 0.0.0
           BUILD_NUMBER: ${{ github.run_number }}
           SIGN_IDENTITY: "-"
           OUT_DIR: ${{ runner.temp }}/dist
@@ -87,9 +94,54 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+
+  plan:
+    name: Plan macOS release
+    if: github.event_name != 'pull_request' && github.repository == 'EdmundLimBoEn/stage-wand'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      build: ${{ steps.plan.outputs.build }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          scripts/version.sh check
+          version="$(scripts/version.sh)"
+          tag="mac-v${version}"
+          exists=false
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then exists=true; fi
+          build=true
+          publish=false
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            if [ "${exists}" = "true" ]; then
+              build=false
+              echo "::notice title=macOS release skipped::${tag} is already released. Bump the version (scripts/version.sh set X.Y.Z) in a feat/* PR to ship a new DMG."
+            else
+              publish=true
+            fi
+          elif [ "${INPUT_PUBLISH}" = "true" ]; then
+            if [ "${exists}" = "true" ]; then
+              echo "::error::${tag} already exists. Bump VERSION (scripts/version.sh set X.Y.Z) or run without publish."
+              exit 1
+            fi
+            publish=true
+          fi
+          {
+            echo "version=${version}"
+            echo "build=${build}"
+            echo "publish=${publish}"
+          } >> "${GITHUB_OUTPUT}"
+          echo "version=${version} tag_exists=${exists} build=${build} publish=${publish}"
+
   release:
     name: Developer ID sign, notarize, staple
-    if: github.event_name != 'pull_request' && github.repository == 'EdmundLimBoEn/stage-wand'
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: macos-15
     timeout-minutes: 60
     permissions:
@@ -124,25 +176,13 @@ jobs:
 
       - name: Resolve version
         env:
-          INPUT_VERSION: ${{ inputs.version }}
-          INPUT_PUBLISH: ${{ inputs.publish }}
+          PLAN_VERSION: ${{ needs.plan.outputs.version }}
+          PLAN_PUBLISH: ${{ needs.plan.outputs.publish }}
         run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
-            version="${GITHUB_REF_NAME#mac-v}"
-            publish=true
-          else
-            version="${INPUT_VERSION}"
-            publish="${INPUT_PUBLISH}"
-          fi
-          if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "::error::Version '${version}' must look like 1.2 or 1.2.3"
-            exit 1
-          fi
           {
-            echo "VERSION=${version}"
+            echo "VERSION=${PLAN_VERSION}"
             echo "BUILD_NUMBER=${GITHUB_RUN_NUMBER}"
-            echo "PUBLISH=${publish}"
+            echo "PUBLISH=${PLAN_PUBLISH}"
           } >> "${GITHUB_ENV}"
 
       - name: Import Developer ID certificate into a temporary keychain
