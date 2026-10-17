@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build StageWandMac.app as a universal binary and wrap it in a DMG.
 #
-# Local / PR use (ad-hoc signed, not notarized):
+# Local / PR use (ad-hoc signed, not notarized; version from the VERSION file):
 #   scripts/mac-release.sh
 #
 # Release use (what .github/workflows/mac-release.yml does):
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-version="${VERSION:-0.0.0}"
+version="${VERSION:-$(tr -d '[:space:]' < "${root}/VERSION")}"
 build_number="${BUILD_NUMBER:-1}"
 identity="${SIGN_IDENTITY:--}"
 notarize="${NOTARIZE:-0}"

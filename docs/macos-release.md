@@ -15,23 +15,20 @@ apply to Developer ID distribution.
 
 1. Fails immediately if any secret below is missing (it never produces an unsigned release).
 2. Imports the Developer ID Application `.p12` into a throwaway keychain and checks it really is `Developer ID Application: … (DUU8J39BA7)`.
-3. Builds a universal release binary, assembles `StageWandMac.app`, stamps `CFBundleShortVersionString` (from the tag) and `CFBundleVersion` (the run number).
+3. Builds a universal release binary, assembles `StageWandMac.app`, stamps `CFBundleShortVersionString` (from `VERSION`) and `CFBundleVersion` (the run number).
 4. `codesign --options runtime --timestamp` with the empty entitlements file, then `codesign --verify --strict --deep`.
 5. Zips the app, `xcrun notarytool submit --wait` with the App Store Connect API key, `stapler staple` + `stapler validate`, `spctl -a -t execute -vv`.
 6. Builds `StageWand-<version>.dmg` (app + Applications link), signs it, notarizes it, staples it, `spctl -a -t open --context context:primary-signature -vv`.
-7. Re-mounts the DMG and re-checks the app inside, uploads the DMG + `.sha256` as an artifact, and attaches them to the GitHub Release `mac-v<version>`.
+7. Re-mounts the DMG and re-checks the app inside, uploads the DMG + `.sha256` as an artifact, and (on `main`, or a manual run with *publish*) attaches them to the GitHub Release `mac-v<version>`.
 8. Deletes the temporary keychain and key file.
 
 If notarization is rejected, the job prints `notarytool log` (the reasons) and fails.
 
 ## Cutting a release
 
-```sh
-git tag mac-v0.2.0 origin/main
-git push origin mac-v0.2.0
-```
+Releases happen automatically when `dev` is merged into `main` and `VERSION` names a version that has no `mac-v<version>` release yet. See [releasing.md](releasing.md). To ship a new DMG, run `scripts/version.sh set 0.2.0` in a `feat/*` or `chore/*` PR, land it in `dev`, then promote `dev` → `main`.
 
-Or run **Actions → macOS release → Run workflow** with a version (tick *publish* to attach it to a release; leave it off for a dry run that only uploads the artifact).
+For a dry run on any branch: **Actions → macOS release → Run workflow**. Leave *publish* off and you get the notarized DMG as an artifact.
 
 ## One-time setup (outside the repo)
 
@@ -52,13 +49,13 @@ Or run **Actions → macOS release → Run workflow** with a version (tick *publ
 ## Local check without secrets
 
 ```sh
-scripts/mac-release.sh            # ad-hoc signed, not notarized: dist/StageWand-0.0.0.dmg
+scripts/mac-release.sh            # ad-hoc signed, not notarized: dist/StageWand-<VERSION>.dmg
 ```
 
 With a Developer ID identity in your login keychain and the API key on disk you can reproduce the release job:
 
 ```sh
-VERSION=0.2.0 SIGN_IDENTITY="Developer ID Application: <name> (DUU8J39BA7)" NOTARIZE=1 \
+SIGN_IDENTITY="Developer ID Application: <name> (DUU8J39BA7)" NOTARIZE=1 \
 ASC_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8 ASC_KEY_ID=<KEYID> ASC_ISSUER_ID=<issuer> \
 scripts/mac-release.sh
 ```
