@@ -26,6 +26,10 @@ name: iOS TestFlight
 on:
   workflow_dispatch:
     inputs:
+      upload:
+        description: "Upload to App Store Connect (untick for an archive + export dry run; needs no ASC_APP_ID)"
+        type: boolean
+        default: true
       external:
         description: "Also submit to the external group in TESTFLIGHT_EXTERNAL_GROUP (if set)"
         type: boolean
@@ -56,6 +60,7 @@ jobs:
     if: github.repository == 'EdmundLimBoEn/stage-wand'
     outputs:
       ready: ${{ steps.check.outputs.ready }}
+      upload: ${{ steps.check.outputs.upload }}
     steps:
       - id: check
         env:
@@ -65,11 +70,15 @@ jobs:
           APPSTORE_CERTIFICATES_FILE_BASE64: ${{ secrets.APPSTORE_CERTIFICATES_FILE_BASE64 }}
           APPSTORE_CERTIFICATES_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATES_PASSWORD }}
           ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+          UPLOAD: ${{ github.event_name != 'workflow_dispatch' || inputs.upload }}
         run: |
           set -euo pipefail
+          required=(ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY_B64 \
+            APPSTORE_CERTIFICATES_FILE_BASE64 APPSTORE_CERTIFICATES_PASSWORD)
+          if [ "${UPLOAD}" = "true" ]; then required+=(ASC_APP_ID); fi
+          echo "upload=${UPLOAD}" >> "${GITHUB_OUTPUT}"
           missing=()
-          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY_B64 \
-            APPSTORE_CERTIFICATES_FILE_BASE64 APPSTORE_CERTIFICATES_PASSWORD ASC_APP_ID
+          for name in "${required[@]}"
           do
             if [ -z "${!name:-}" ]; then missing+=("${name}"); fi
           done
@@ -234,6 +243,7 @@ jobs:
           PY
 
       - name: Upload build to App Store Connect and wait for processing
+        if: needs.gate.outputs.upload == 'true'
         run: |
           set -euo pipefail
           notes="$(cat ios/TestFlight/WhatToTest.en-US.txt; printf '\nBuild from commit %s.\n' "${GITHUB_SHA::12}")"
@@ -241,7 +251,7 @@ jobs:
             --wait --test-notes "${notes}" --locale en-US
 
       - name: Add to external group and submit for Beta App Review
-        if: env.TESTFLIGHT_EXTERNAL_GROUP != ''
+        if: needs.gate.outputs.upload == 'true' && env.TESTFLIGHT_EXTERNAL_GROUP != ''
         run: |
           set -euo pipefail
           asc builds add-groups --app "${ASC_APP_ID}" \
@@ -254,7 +264,9 @@ jobs:
           {
             echo "### Stage Wand TestFlight"
             echo "- Version: ${BUILT_VERSION:-?} (${BUILT_BUILD_NUMBER:-?})"
-            if [ -n "${TESTFLIGHT_EXTERNAL_GROUP}" ]; then
+            if [ "${{ needs.gate.outputs.upload }}" != "true" ]; then
+              echo "- Dry run: archived and exported, not uploaded"
+            elif [ -n "${TESTFLIGHT_EXTERNAL_GROUP}" ]; then
               echo "- External group: ${TESTFLIGHT_EXTERNAL_GROUP} (submitted for Beta App Review)"
             else
               echo "- Internal testers only (TESTFLIGHT_EXTERNAL_GROUP not set)"
