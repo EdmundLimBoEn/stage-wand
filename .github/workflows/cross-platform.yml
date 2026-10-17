@@ -179,20 +179,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - name: Swift protocol, command delivery, URL, and gesture checks
-        run: |
-          swiftc -swift-version 6 Shared/Protocol.swift Shared/Bluetooth.swift scripts/protocol-check.swift -o "$RUNNER_TEMP/protocol-check"
-          "$RUNNER_TEMP/protocol-check"
-          swiftc -swift-version 6 Shared/Protocol.swift Shared/CommandQueue.swift scripts/command-queue-check.swift -o "$RUNNER_TEMP/command-queue-check"
-          "$RUNNER_TEMP/command-queue-check"
-          swiftc -swift-version 6 Shared/ConnectionURL.swift scripts/connection-url-check.swift -o "$RUNNER_TEMP/connection-url-check"
-          "$RUNNER_TEMP/connection-url-check"
-          swiftc -swift-version 6 Shared/SquareUnlock.swift scripts/square-unlock-check.swift -o "$RUNNER_TEMP/square-unlock-check"
-          "$RUNNER_TEMP/square-unlock-check"
-          swiftc -swift-version 6 mac/Sources/AuthenticationLimiter.swift mac/Sources/PeerOwnership.swift scripts/session-security-check.swift -o "$RUNNER_TEMP/session-security-check"
-          "$RUNNER_TEMP/session-security-check"
-      - name: Bluetooth client and server failure-path checks
-        run: bash scripts/bluetooth-check.sh
+      - name: Swift protocol, command delivery, URL, gesture, and Bluetooth failure-path checks
+        run: bash scripts/apple-swift-checks.sh
       - name: Apple transport integration checks
         run: |
           transport_sources=(
