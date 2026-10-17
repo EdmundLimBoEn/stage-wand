@@ -168,6 +168,9 @@ jobs:
           chmod 600 "${key_path}"
           echo "APP_STORE_CONNECT_API_KEY_PATH=${key_path}" >> "${GITHUB_ENV}"
 
+      # Sign the archive with the imported Apple Distribution identity. Without
+      # this, automatic signing on a fresh runner asks the API for a new Apple
+      # Development certificate every run.
       - name: Archive Release
         working-directory: ios
         run: |
@@ -186,6 +189,7 @@ jobs:
             -authenticationKeyID "${ASC_KEY_ID}" \
             -authenticationKeyIssuerID "${ASC_ISSUER_ID}" \
             CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
             DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" \
             CURRENT_PROJECT_VERSION="${build_number}"
 
