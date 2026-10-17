@@ -4,8 +4,11 @@
 # scripts/asc-appstore-profile.py finds or creates an App Store profile for the
 # imported Apple Distribution certificate through the App Store Connect API.
 #
-# Skips cleanly (a notice, not a failure) until every secret and the
-# ASC_APP_ID variable below are set. See docs/testflight.md.
+# Runs on every push to main that touches the app (dev merged into main) and
+# by hand. PRs and dev pushes only run the configuration check. Skips cleanly
+# (a notice, not a failure) until every secret and the ASC_APP_ID variable
+# below are set. Marketing version comes from VERSION. See docs/releasing.md
+# and docs/testflight.md.
 #
 # Repository secrets (never commit the values, .p8 or .p12 files):
 #   ASC_KEY_ID                          App Store Connect API Key ID
@@ -36,19 +39,28 @@ on:
         description: "Also submit to the external group in TESTFLIGHT_EXTERNAL_GROUP (if set)"
         type: boolean
         default: true
+  # main (dev merged into main) archives and uploads. dev pushes and PRs only
+  # run the configuration check: they never sign, upload or see secrets used.
   push:
-    branches: [main]
+    branches: [main, dev]
     paths:
+      - "VERSION"
       - "ios/**"
       - "Shared/**"
       - ".github/workflows/ios-testflight.yml"
       - "scripts/apple-swift-checks.sh"
-  # PRs only run the gate (never sign or upload). This also registers the
-  # workflow so it can be dispatched on a branch before it reaches main.
+      - "scripts/asc-appstore-profile.py"
+      - "scripts/version.sh"
   pull_request:
     branches: [main, dev]
     paths:
+      - "VERSION"
+      - "ios/**"
+      - "Shared/**"
       - ".github/workflows/ios-testflight.yml"
+      - "scripts/apple-swift-checks.sh"
+      - "scripts/asc-appstore-profile.py"
+      - "scripts/version.sh"
 
 concurrency:
   group: ios-testflight-${{ github.ref }}
@@ -84,18 +96,20 @@ jobs:
           required=(ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY_B64 \
             APPSTORE_CERTIFICATES_FILE_BASE64 APPSTORE_CERTIFICATES_PASSWORD)
           if [ "${UPLOAD}" = "true" ]; then required+=(ASC_APP_ID); fi
-          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-            echo "ready=false" >> "${GITHUB_OUTPUT}"
-            echo "upload=false" >> "${GITHUB_OUTPUT}"
-            echo "::notice::Pull requests never sign or upload; run this workflow by hand or push to main."
-            exit 0
-          fi
-          echo "upload=${UPLOAD}" >> "${GITHUB_OUTPUT}"
           missing=()
           for name in "${required[@]}"
           do
             if [ -z "${!name:-}" ]; then missing+=("${name}"); fi
           done
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] || \
+             { [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" != "refs/heads/main" ]; }; then
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+            echo "upload=false" >> "${GITHUB_OUTPUT}"
+            if [ "${#missing[@]}" -eq 0 ]; then state="configured"; else state="not configured (missing: ${missing[*]})"; fi
+            echo "::notice::TestFlight is ${state}. Only pushes to main and manual runs sign and upload."
+            exit 0
+          fi
+          echo "upload=${UPLOAD}" >> "${GITHUB_OUTPUT}"
           if [ "${#missing[@]}" -eq 0 ]; then
             echo "ready=true" >> "${GITHUB_OUTPUT}"
           else
@@ -140,6 +154,9 @@ jobs:
             echo "::error::App Store Connect requires the iOS 26 SDK or later"
             exit 1
           fi
+
+      - name: Check version consistency
+        run: scripts/version.sh check
 
       - name: Shared Swift checks (protocol, queue, URL, unlock, session, Bluetooth)
         run: bash scripts/apple-swift-checks.sh
@@ -209,6 +226,7 @@ jobs:
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE_SPECIFIER="${PROFILE_NAME}" \
             DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" \
+            MARKETING_VERSION="$(../scripts/version.sh)" \
             CURRENT_PROJECT_VERSION="${build_number}"
 
       - name: Check archived app metadata

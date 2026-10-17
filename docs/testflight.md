@@ -2,7 +2,7 @@
 
 Stage Wand is not going to the App Store: the locked-screen volume-button control very likely fails review under guideline 2.5.9 (and the silent background audio that keeps it working under 2.5.4). TestFlight is the distribution channel. Internal testers (up to 100 App Store Connect users) need no review. **External testers** (public link, up to 10,000) need the first build of each version approved by **Beta App Review**, which applies a lighter subset of the guidelines. The volume behaviour may still be questioned, so the review notes below disclose it up front.
 
-- Workflow: [`.github/workflows/ios-testflight.yml`](../.github/workflows/ios-testflight.yml) (runs on push to `main` touching `ios/` or `Shared/`, or manually)
+- Workflow: [`.github/workflows/ios-testflight.yml`](../.github/workflows/ios-testflight.yml). It uploads on every push to `main` that touches `ios/`, `Shared/` or `VERSION` (that is, when `dev` is merged into `main`; see [releasing.md](releasing.md)) and on manual runs. PRs and `dev` pushes only run the configuration check.
 - What to Test text (uploaded with every build): [`ios/TestFlight/WhatToTest.en-US.txt`](../ios/TestFlight/WhatToTest.en-US.txt)
 - Privacy policy: [`docs/privacy.md`](privacy.md), public at <https://github.com/EdmundLimBoEn/stage-wand/blob/main/docs/privacy.md> once merged to `main`
 

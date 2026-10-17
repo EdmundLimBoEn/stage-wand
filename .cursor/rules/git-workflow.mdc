@@ -1,12 +1,13 @@
 ---
-description: Solo main/dev worktrees — keep this checkout on dev
+description: Solo main/dev worktrees — feat → dev → main via PRs; merging into main releases
 alwaysApply: true
 ---
 
 # Git workflow
 
-Edmund is the sole contributor. Do not invent PR/review process.
+Edmund is the sole contributor. Every hop is a PR: `feat/*` | `fix/*` | `chore/*` → `dev` → `main`. Merging `dev` into `main` is the release (macOS DMG + TestFlight). See AGENTS.md and docs/releasing.md.
 
 - This directory stays on `dev`. For real work, `./scripts/worktree add <slug>` and edit in `../stage-wand-trees/…`. Never `git switch` this folder off `dev`.
-- Never commit to `main`. Land features by merging into `dev` when asked. Promote `dev` → `main` only when asked to ship. Hotfixes are `hotfix/*` from `main`, merged into `dev` too.
-- One branch per worktree. No force-push of `main` or `dev`. No GitHub PR unless he asks.
+- Never commit or push directly to `main` or `dev`; both are protected. Open a PR into `dev`; promote `dev` → `main` by PR only when asked to ship.
+- Bump the version with `scripts/version.sh set X.Y.Z`; `VERSION` is the single source of truth.
+- One branch per worktree, one PR per thread. No force-push of `main` or `dev`.
