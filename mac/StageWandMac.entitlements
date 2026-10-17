@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for the Developer ID build of StageWandMac.
+
+  Intentionally empty. The host is not sandboxed (Developer ID, not the Mac App
+  Store), so it needs no com.apple.security.app-sandbox / network / bluetooth
+  keys. What it does use is gated by TCC, not by hardened-runtime exceptions:
+    - Bluetooth (CBPeripheralManager): NSBluetoothAlwaysUsageDescription in Info.plist
+    - Bonjour/LAN listener (NWListener): NSLocalNetworkUsageDescription + NSBonjourServices
+    - Posting keyboard/mouse CGEvents: the Accessibility permission (AXIsProcessTrusted)
+  It sends no Apple Events, loads no unsigned code, and uses no JIT, so none of
+  com.apple.security.automation.apple-events, cs.disable-library-validation or
+  cs.allow-jit apply. Add a key here only with the code that needs it.
+-->
+<plist version="1.0">
+<dict/>
+</plist>

@@ -62,6 +62,8 @@ Run these commands from the repository root:
 make -C mac app && open ~/Applications/StageWandMac.app
 ```
 
+Prebuilt, notarized DMGs are published as GitHub Releases tagged `mac-v<version>`; see [docs/macos-release.md](docs/macos-release.md).
+
 This runs `make app` in `mac/`, builds the release executable, and signs it with your Apple Development identity, and installs it at `~/Applications/StageWandMac.app`. A pairing window opens on launch with the code, connection status, and listening port. Reopen the app or use its menu bar item to show the window again. The default port is **8787**, with fallback ports **8788–8790**; always use the port shown there.
 
 Generate and open the phone project:
