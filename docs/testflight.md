@@ -57,7 +57,7 @@ TestFlight → **Test Information** (left sidebar), English (U.S.):
 | Field | Value |
 | --- | --- |
 | Beta App Description | see below |
-| Feedback Email | `FEEDBACK_EMAIL_PLACEHOLDER` (replace with a real inbox you read) |
+| Feedback Email | `edmund@sillyapps.co` |
 | Marketing URL | `https://github.com/EdmundLimBoEn/stage-wand` |
 | Privacy Policy URL | `https://github.com/EdmundLimBoEn/stage-wand/blob/main/docs/privacy.md` |
 | Beta App Review: contact first/last name, phone, email | your details (Apple uses these only for review questions) |
@@ -94,7 +94,7 @@ Uploaded automatically from [`ios/TestFlight/WhatToTest.en-US.txt`](../ios/TestF
 > Bluetooth and Local Network permissions are used only to find and connect to the user's own computer. No data is collected; see the privacy policy.
 
 ## Checks before the first external submission
-- [ ] `FEEDBACK_EMAIL_PLACEHOLDER` replaced here, in App Store Connect and in `docs/privacy.md`
+- [ ] Feedback email `edmund@sillyapps.co` entered in App Store Connect → TestFlight → Test Information
 - [ ] Privacy policy URL loads (requires this branch merged to `main`)
 - [ ] An internal build installed and paired with a host at least once
 - [ ] Mac host DMG release published (see `docs/macos-release.md`) so external testers have something to pair with
