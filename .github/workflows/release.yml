@@ -11,8 +11,8 @@
 #   SHA256SUMS
 #
 # Push to main: builds and publishes v<VERSION> unless that tag already exists.
-# workflow_dispatch (any branch): builds everything and uploads workflow
-# artifacts only (dry run). Tick "publish" to also create the release.
+# workflow_dispatch (any branch) and PRs touching packaging: build everything
+# and upload workflow artifacts only (dry run). Tick "publish" to also create the release.
 
 name: Release
 
@@ -26,6 +26,13 @@ on:
         required: false
         default: false
         type: boolean
+  # PRs that touch release packaging get a dry run (artifacts only, never published).
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - ".github/workflows/release.yml"
+      - "host/windows/**"
+      - "android/app/build.gradle.kts"
 
 permissions:
   contents: read
@@ -54,7 +61,7 @@ jobs:
           version=$(bash scripts/version.sh)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           publish=false
-          if [ "${{ github.event_name }}" = push ] || [ "${{ inputs.publish }}" = true ]; then publish=true; fi
+          if [ "${{ github.ref }}" = refs/heads/main ] && [ "${{ github.event_name }}" = push ] || [ "${{ inputs.publish }}" = true ]; then publish=true; fi
           if [ "$publish" = true ] && gh release view "v$version" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "::notice::v$version is already released; bump VERSION to ship a new release."
             publish=false
@@ -237,6 +244,7 @@ jobs:
         with:
           packages: "platform-tools platforms;android-35 build-tools;35.0.0"
       - name: Build release-signed APK
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           STAGEWAND_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
