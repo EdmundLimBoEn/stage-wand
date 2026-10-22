@@ -34,8 +34,8 @@ const secret = randomBytes(32).toString("base64url");
 const gate = await startTunnelGate({ secret, originPort: origin.port!, port: 0 });
 const clients: Socket[] = [];
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-async function until(check: () => boolean, label: string) {
-    const deadline = Date.now() + 4000;
+async function until(check: () => boolean, label: string, timeout = 4000) {
+    const deadline = Date.now() + timeout;
     while (!check()) {
         if (Date.now() > deadline) throw new Error(`Timed out: ${label}`);
         await delay(10);
@@ -104,6 +104,30 @@ try {
     await until(() => socket.destroyed && closes === 1, "clean WebSocket close");
     console.log("PASS: auth/reply, rewritten path, headers, ping/pong order, clean close");
 
+    async function incomplete() {
+        const socket = connect(gate.port, "127.0.0.1");
+        clients.push(socket);
+        socket.on("error", () => {});
+        socket.resume();
+        await new Promise<void>((resolve) => socket.once("connect", resolve));
+        socket.write("GET /");
+        return socket;
+    }
+    const incompleteClients: Socket[] = [];
+    for (let i = 0; i < 64; i++) incompleteClients.push(await incomplete());
+    const overflow = await incomplete();
+    await until(() => overflow.destroyed, "pre-auth cap rejection");
+    assert(incompleteClients.every((socket) => !socket.destroyed));
+    assert.equal(upgrades, 1);
+
+    // Completing a rejected request must release its pre-auth slot on close.
+    incompleteClients[0].write("wrong HTTP/1.1\r\n\r\n");
+    await until(() => incompleteClients[0].destroyed, "pre-auth slot release");
+    assert.equal((await fetch(`http://127.0.0.1:${gate.port}/${secret}`)).status, 200);
+    for (const socket of incompleteClients.slice(1)) socket.write("wrong HTTP/1.1\r\n\r\n");
+    await until(() => incompleteClients.every((socket) => socket.destroyed), "pre-auth sockets drained");
+    console.log("PASS: incomplete handshakes capped at 64; closed sockets release capacity");
+
     const live = Array.from({ length: 32 }, () => raw(`/${secret}`));
     await until(() => upgrades === 33, "32 simultaneous upgrades");
     const excess = raw(`/${secret}`);
@@ -112,6 +136,19 @@ try {
     await until(() => excessReply.startsWith("HTTP/1.1 503"), "connection cap rejection");
     assert.equal(upgrades, 33);
     console.log("PASS: 32-upgrade cap rejects excess before origin");
+
+    const slow = await incomplete();
+    const started = Date.now();
+    const trickle = setInterval(() => slow.write("x"), 100);
+    try {
+        await until(() => slow.destroyed, "absolute header deadline despite incoming bytes", 12_000);
+        assert(Date.now() - started >= 9000, "socket closed before the header deadline");
+        assert(live.every((socket) => !socket.destroyed), "completed upgrades must outlive the header deadline");
+        assert.equal(upgrades, 33);
+    } finally {
+        clearInterval(trickle);
+    }
+    console.log("PASS: trickled headers expire after 10 seconds; completed upgrades remain open");
     await gate.close();
     await until(() => live.every((socket) => socket.destroyed) && closes === 33, "gate shutdown cleanup");
     console.log("PASS: gate shutdown closes active origin and client sockets");
