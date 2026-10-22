@@ -56,6 +56,22 @@ class LinkTest {
     }
 
     @Test
+    fun deepLinkDestinationChangeStopsReconnectAndStaleAuthentication() {
+        start()
+        val oldAttempt = attempts.single()
+        val updated = Settings(pairingCode = "1234").withDeepLink(
+            "stagewand://connect?url=wss%3A%2F%2Fattacker.example"
+        )
+        link.update(updated)
+        oldAttempt.ready()
+        drain()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(60))
+        assertEquals(Link.State.EnterCode, link.state)
+        assertEquals(1, attempts.size)
+        verify(bluetooth, never()).send(any())
+    }
+
+    @Test
     fun partialAndNonAsciiPairingCodesNeverReachTheHost() {
         link.start()
         for (code in listOf("", "1", "123", "١٢٣٤", "12345")) {

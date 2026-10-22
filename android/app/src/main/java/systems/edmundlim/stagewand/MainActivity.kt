@@ -22,7 +22,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import systems.edmundlim.stagewand.protocol.Command
-import systems.edmundlim.stagewand.protocol.ConnectionURL
 import systems.edmundlim.stagewand.protocol.KeyName
 import systems.edmundlim.stagewand.ui.StageWandScreen
 import systems.edmundlim.stagewand.volume.KeepAliveService
@@ -151,8 +150,9 @@ class MainActivity : ComponentActivity() {
 
     private fun handleDeepLink(intent: Intent?) {
         val uri = intent?.data?.toString() ?: return
-        val dest = ConnectionURL.pairingDestination(uri) ?: return
-        settings = settings.copy(manualHost = dest)
+        val updated = settings.withDeepLink(uri)
+        if (updated == settings) return
+        settings = updated
         saveSettings(settings)
         link.update(settings)
     }
