@@ -162,7 +162,7 @@ That installs `/usr/bin/stagewand`, its application launcher and icon, `/usr/bin
 
 ### Build on Debian or Ubuntu without a package
 
-Source builds require **Go 1.26.9 or newer**. Install a supported Go toolchain before the commands below; older distro `golang-go` packages may be insufficient. A recent Go launcher with automatic toolchain downloads enabled reads the required version from `host/go.mod`.
+Source builds require **Go 1.26.10 or newer**. Install a supported Go toolchain before the commands below; older distro `golang-go` packages may be insufficient. A recent Go launcher with automatic toolchain downloads enabled reads the required version from `host/go.mod`.
 
 ```sh
 sudo apt install git bluez

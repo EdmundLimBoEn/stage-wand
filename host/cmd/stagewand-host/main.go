@@ -23,7 +23,11 @@ import (
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/server"
 )
 
+// version is stamped at release time with -ldflags "-X main.version=<VERSION>".
+var version = "dev"
+
 func main() {
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	jsonStatus := flag.Bool("json-status", false, "emit JSON status updates for the desktop app")
 	serve := flag.Bool("serve", false, "headless test server with pairing code 0000")
 	selftest := flag.Bool("selftest", false, "inject a short movement, click, Esc, and scroll")
@@ -32,6 +36,10 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "log commands without injecting input")
 	name := flag.String("name", "", "mDNS instance name (default: hostname)")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("stagewand-host", version)
+		return
+	}
 	if os.Getenv("STAGEWAND_DRY_RUN") == "1" {
 		*dryRun = true
 	}

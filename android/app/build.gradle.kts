@@ -11,10 +11,24 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1"
+        versionName = System.getenv("STAGEWAND_VERSION") ?: "0.1"
+    }
+    // Release signing comes from CI secrets (see docs/releasing.md); without them assembleRelease stays unsigned.
+    val keystore = System.getenv("STAGEWAND_KEYSTORE")
+    if (keystore != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(keystore)
+                storeType = "pkcs12"
+                storePassword = System.getenv("STAGEWAND_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("STAGEWAND_KEY_ALIAS")
+                keyPassword = System.getenv("STAGEWAND_KEYSTORE_PASSWORD")
+            }
+        }
     }
     buildTypes {
         release {
+            if (keystore != null) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
         }

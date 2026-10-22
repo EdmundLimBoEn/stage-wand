@@ -40,6 +40,29 @@ On a push to `main`, a `plan` job reads `VERSION` and checks whether the tag `ma
   - The release is not marked "latest", so the Linux `releases/latest/download/…` links keep working.
   - A missing secret fails the run. It never publishes an unsigned DMG.
 
+### All platforms (`release.yml`)
+On a push to `main`, `release.yml` reads `VERSION` and, unless the tag `v<VERSION>` already exists, builds and publishes **one GitHub Release `v<VERSION>`** (marked *latest*) that holds every download. Asset names are fixed so the website can pick them from `GET /repos/EdmundLimBoEn/stage-wand/releases/latest`:
+
+| Platform | Asset | Notes |
+| --- | --- | --- |
+| macOS | `StageWand-<v>.dmg`, `StageWand-<v>.dmg.sha256` | copied from `mac-v<v>` (the publish job waits up to 60 min for `mac-release.yml`) |
+| Windows x64 | `StageWand-<v>-windows-x64-setup.exe` | Inno Setup installer, per-user or all-users |
+| Windows x64 | `StageWand-<v>-windows-x64.zip` | portable `stagewand-host.exe` |
+| Linux x86_64 | `StageWand-<v>-linux-x86_64.AppImage` | Qt 6 GUI + host, built on Ubuntu 22.04 (glibc ≥ 2.35). `chmod +x` and run; `--version`, `--diagnose`, `--selftest`, `--serve` or `--host <args>` run the bundled `stagewand-host`. uinput access still needs the udev rule (bundled under `usr/share/stagewand/`; see the tar.gz INSTALL.txt). Arch users: works, but the `.pkg.tar.zst` integrates better |
+| Linux x86_64 | `StageWand-<v>-linux-amd64.deb` | Debian/Ubuntu, host + Qt desktop app |
+| Linux x86_64 | `StageWand-<v>-linux-x86_64.pkg.tar.zst` | Arch: `sudo pacman -U ./StageWand-<v>-linux-x86_64.pkg.tar.zst` |
+| Linux x86_64 | `StageWand-<v>-linux-x86_64.tar.gz` | portable headless host + udev rules, see `INSTALL.txt` inside |
+| Android | `StageWand-<v>-android.apk` | release-signed |
+| all | `SHA256SUMS` | |
+
+The release also carries the legacy names `stagewand-host-x86_64.pkg.tar.zst` and `stagewand-host_amd64.deb`, so `releases/latest/download/...` links in the README keep working. The moving `linux` release (cross-platform.yml) is still updated on every main push but is no longer marked latest. Existing `mac-v*` releases are untouched.
+
+- **Windows is not code-signed.** SmartScreen shows "Windows protected your PC"; users click *More info → Run anyway*.
+- The AppImage is built with linuxdeploy + linuxdeploy-plugin-qt (xcb, wayland and offscreen platform plugins bundled). CI runs its CLI with `--appimage-extract-and-run`, checks every bundled library resolves, and starts the GUI under offscreen and Xvfb until the host listens on port 8787.
+- **Android signing:** secrets `ANDROID_KEYSTORE_BASE64` (PKCS#12), `ANDROID_KEYSTORE_PASSWORD` (store and key) and `ANDROID_KEY_ALIAS` (`stagewand`). Keep an offline backup of the keystore: losing it means users must uninstall to update.
+- **Dry run:** *Actions → Release → Run workflow* (any branch) builds and smoke-tests everything and uploads the files as workflow artifacts. Tick *publish* to create the release. PRs that touch `release.yml`, `host/windows/`, `host/appimage/` or the Android Gradle file also get a dry run.
+- `stagewand-host --version` prints the stamped version.
+
 ### iOS (`ios-testflight.yml`)
 On a push to `main` that touches the app, it runs the shared Swift checks and archives with the Apple Distribution certificate and an API-managed App Store profile. It then exports and uploads to TestFlight with the What to Test notes from `ios/TestFlight/WhatToTest.en-US.txt`.
 - The build number is `<run number>.<run attempt>`, so it always increases. You never bump it by hand. App Store Connect can raise it further if needed.

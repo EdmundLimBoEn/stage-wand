@@ -32,6 +32,6 @@ Privacy labels require accurate operational evidence. Pairing/preferences are st
 
 ## Release integration
 
-At audit start, only PR #6 was open, promoting `dev` to `main`. PRs #4 and #5 were already on `dev`. PR #6's Linux and Windows jobs failed on called Go standard-library vulnerabilities fixed in Go 1.26.9. The release toolchain fix pins that patch and updates `x/net` to v0.60.0 and `x/sys` to v0.48.0. Existing uncommitted `feat/ci-green` work was preserved; its toolchain edits were applied independently here.
+At audit start, only PR #6 was open, promoting `dev` to `main`. PRs #4 and #5 were already on `dev`. PR #6's Linux and Windows jobs failed on called Go standard-library vulnerabilities fixed in Go 1.26.10. The release toolchain fix pins that patch and updates `x/net` to v0.60.0 and `x/sys` to v0.48.0. Existing uncommitted `feat/ci-green` work was preserved; its toolchain edits were applied independently here.
 
 Written by gpt-6.1-sol in Codex on behalf of Edmund
