@@ -16,19 +16,32 @@ export const PLATFORMS = {
 };
 const TTL = 300;
 
+// Unauthenticated GitHub API calls are limited per egress IP, and Cloudflare
+// egress IPs are shared, so: fresh copy for 5 min, a stale copy for 7 days to
+// serve when the API errors, and an optional GITHUB_TOKEN env var (read-only,
+// public repo) to lift the limit.
 async function releases(ctx) {
   const cache = caches.default;
-  const key = new Request(`https://stagewand-cache.internal/releases/${REPO}`);
-  const hit = await cache.match(key);
+  const fresh = new Request(`https://stagewand-cache.internal/releases/${REPO}`);
+  const stale = new Request(`https://stagewand-cache.internal/releases-stale/${REPO}`);
+  const hit = await cache.match(fresh);
   if (hit) return hit.json();
-  const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=50`, {
-    headers: { "User-Agent": "stagewand-site", Accept: "application/vnd.github+json" },
-  });
-  if (!r.ok) throw new Error(`GitHub API ${r.status}`);
+  const headers = { "User-Agent": "stagewand-site", Accept: "application/vnd.github+json" };
+  if (ctx.env && ctx.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${ctx.env.GITHUB_TOKEN}`;
+  let r;
+  try {
+    r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=50`, { headers });
+  } catch (e) { r = null; }
+  if (!r || !r.ok) {
+    const old = await cache.match(stale);
+    if (old) return old.json();
+    throw new Error(`GitHub API ${r ? r.status : "unreachable"}`);
+  }
   const body = await r.text();
-  ctx.waitUntil(cache.put(key, new Response(body, {
-    headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${TTL}` },
-  })));
+  const put = (key, ttl) => cache.put(key, new Response(body, {
+    headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${ttl}` },
+  }));
+  ctx.waitUntil(Promise.all([put(fresh, TTL), put(stale, 7 * 86400)]));
   return JSON.parse(body);
 }
 
