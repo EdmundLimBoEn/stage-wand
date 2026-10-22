@@ -1,6 +1,6 @@
 /* Stage Wand — follows sillyapps.co: quiet, editorial, dark-first. */
 :root {
-  color-scheme: dark light;
+  color-scheme: dark;
   --paper: light-dark(#fafaf9, #0a0a0b);
   --paper-2: light-dark(#f2f2f0, #111113);
   --ink: light-dark(#18181b, #ededef);
