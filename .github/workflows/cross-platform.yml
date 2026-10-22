@@ -258,7 +258,8 @@ jobs:
           tag_name: linux
           target_commitish: ${{ github.sha }}
           name: Linux packages
-          make_latest: true
+          # The unified v<VERSION> release (release.yml) is "latest" and also carries the legacy file names.
+          make_latest: false
           body: |
             Packages from tested commit `${{ github.sha }}` on `main`.
             [Build and test results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).

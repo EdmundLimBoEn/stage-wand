@@ -1,0 +1,326 @@
+# Unified cross-platform release: one GitHub Release v<VERSION> holding every
+# downloadable build, with predictable asset names (see docs/releasing.md):
+#
+#   StageWand-<v>.dmg (+ .sha256)                macOS, copied from mac-v<v> (mac-release.yml)
+#   StageWand-<v>-windows-x64.zip                Windows portable (stagewand-host.exe)
+#   StageWand-<v>-windows-x64-setup.exe          Windows installer (Inno Setup, unsigned)
+#   StageWand-<v>-linux-x86_64.tar.gz            Linux portable host binary + udev rules
+#   StageWand-<v>-linux-amd64.deb                Debian/Ubuntu package (host + Qt desktop app)
+#   StageWand-<v>-linux-x86_64.pkg.tar.zst       Arch Linux package (host + Qt desktop app)
+#   StageWand-<v>-android.apk                    Android remote, release-signed
+#   SHA256SUMS
+#
+# Push to main: builds and publishes v<VERSION> unless that tag already exists.
+# workflow_dispatch (any branch): builds everything and uploads workflow
+# artifacts only (dry run). Tick "publish" to also create the release.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the GitHub Release v<VERSION> (default: dry run, artifacts only)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.26.9"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/version.sh check
+          version=$(bash scripts/version.sh)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          publish=false
+          if [ "${{ github.event_name }}" = push ] || [ "${{ inputs.publish }}" = true ]; then publish=true; fi
+          if [ "$publish" = true ] && gh release view "v$version" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::v$version is already released; bump VERSION to ship a new release."
+            publish=false
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "version=$version publish=$publish"
+
+  windows:
+    needs: plan
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: host/go.sum
+      - name: Build stagewand-host.exe
+        working-directory: host
+        run: |
+          go test ./internal/... ./cmd/...
+          go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o ../dist/win/stagewand-host.exe ./cmd/stagewand-host
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          out=$(dist/win/stagewand-host.exe --version)
+          echo "$out"
+          [ "$out" = "stagewand-host $VERSION" ]
+          dist/win/stagewand-host.exe --diagnose || true
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          Copy-Item README.md dist/win/README.md
+          @"
+          Stage Wand host $env:VERSION for Windows (x64)
+          Run stagewand-host.exe, then pair from the Stage Wand phone app.
+          This build is not code-signed: Windows SmartScreen will warn ("Windows protected your PC").
+          Click "More info" -> "Run anyway".
+          "@ | Set-Content dist/win/WINDOWS.txt
+          New-Item -ItemType Directory -Force out | Out-Null
+          Compress-Archive -Path dist/win/* -DestinationPath "out/StageWand-$env:VERSION-windows-x64.zip"
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc /Qp "/DAppVersion=$env:VERSION" "/DSrcDir=$PWD\dist\win" "/DOutDir=$PWD\out" "/FStageWand-$env:VERSION-windows-x64-setup" host\windows\stagewand.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Silent install smoke test
+        shell: pwsh
+        run: |
+          $p = Start-Process "out\StageWand-$env:VERSION-windows-x64-setup.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/DIR=C:\StageWandTest' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
+          & C:\StageWandTest\stagewand-host.exe --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StageWand-windows
+          path: out/*
+          if-no-files-found: error
+
+  linux-portable:
+    needs: plan
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: host/go.sum
+      - name: Build and smoke test
+        run: |
+          set -euo pipefail
+          name="StageWand-$VERSION-linux-x86_64"
+          stage="$RUNNER_TEMP/$name"
+          mkdir -p "$stage" out
+          (cd host && go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=$VERSION" -o "$stage/stagewand-host" ./cmd/stagewand-host)
+          [ "$("$stage/stagewand-host" --version)" = "stagewand-host $VERSION" ]
+          "$stage/stagewand-host" --diagnose
+          "$stage/stagewand-host" --selftest --dry-run
+          install -m644 host/udev/70-stagewand-uinput.rules host/modules-load.d/uinput.conf README.md "$stage/"
+          cat > "$stage/INSTALL.txt" <<TXT
+          Stage Wand host $VERSION (Linux x86_64, headless; the Qt desktop app ships in the .deb / Arch package)
+
+            sudo install -Dm755 stagewand-host /usr/local/bin/stagewand-host
+            sudo install -Dm644 70-stagewand-uinput.rules /etc/udev/rules.d/70-stagewand-uinput.rules
+            sudo install -Dm644 uinput.conf /etc/modules-load.d/stagewand-uinput.conf
+            sudo modprobe uinput && sudo udevadm control --reload && sudo udevadm trigger
+            stagewand-host
+
+          Arch Linux: prefer StageWand-$VERSION-linux-x86_64.pkg.tar.zst (sudo pacman -U ./<file>).
+          BLE needs bluez running (systemctl enable --now bluetooth).
+          TXT
+          tar -C "$RUNNER_TEMP" -czf "out/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StageWand-linux-tar
+          path: out/*
+          if-no-files-found: error
+
+  linux-deb:
+    needs: plan
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: host/go.sum
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake g++ qt6-base-dev qt6-base-dev-tools libgl1-mesa-dev dpkg-dev
+      - name: Build and install-test the .deb
+        run: |
+          set -euo pipefail
+          STAGEWAND_PACKAGE_VERSION="$VERSION" bash host/debian/build.sh "$RUNNER_TEMP/deb"
+          mkdir -p out
+          cp "$RUNNER_TEMP/deb/stagewand-host_amd64.deb" "out/StageWand-$VERSION-linux-amd64.deb"
+          sudo apt-get install -y "./out/StageWand-$VERSION-linux-amd64.deb"
+          stagewand-host --diagnose
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StageWand-linux-deb
+          path: out/*
+          if-no-files-found: error
+
+  linux-arch:
+    needs: plan
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - run: |
+          sed -i 's/^DownloadUser/#DownloadUser/' /etc/pacman.conf
+          grep -q '^DisableSandbox' /etc/pacman.conf || printf '\nDisableSandbox\n' >> /etc/pacman.conf
+          pacman -Syu --noconfirm --needed archlinux-keyring
+          pacman -Syu --noconfirm --needed go git gcc base-devel cmake qt6-base qt6-wayland bluez hicolor-icon-theme
+      - uses: actions/checkout@v4
+      - name: makepkg, install, smoke test
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory '*'
+          useradd -m builder
+          cp -a "$GITHUB_WORKSPACE" /home/builder/stage-wand
+          chown -R builder:builder /home/builder/stage-wand
+          su - builder -c 'cd /home/builder/stage-wand/host/arch && makepkg -f --noconfirm'
+          pkg=$(ls /home/builder/stage-wand/host/arch/stagewand-host-*.pkg.tar.zst | head -n1)
+          pacman -U --noconfirm "$pkg"
+          stagewand-host --diagnose
+          stagewand-host --selftest --dry-run
+          mkdir -p out
+          cp "$pkg" "out/StageWand-$VERSION-linux-x86_64.pkg.tar.zst"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StageWand-linux-arch
+          path: out/*
+          if-no-files-found: error
+
+  android:
+    needs: plan
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+      - name: Build release-signed APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STAGEWAND_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          STAGEWAND_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          STAGEWAND_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          [ -n "$KEYSTORE_B64" ] || { echo "::error::ANDROID_KEYSTORE_BASE64 secret missing"; exit 1; }
+          export STAGEWAND_KEYSTORE="$RUNNER_TEMP/release.p12"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$STAGEWAND_KEYSTORE"
+          (cd android && ./gradlew --no-daemon :app:assembleRelease)
+          rm -f "$STAGEWAND_KEYSTORE"
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk "out/StageWand-$VERSION-android.apk"
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -n1)
+          "$apksigner" verify --print-certs "out/StageWand-$VERSION-android.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StageWand-android
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    needs: [plan, windows, linux-portable, linux-deb, linux-arch, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: StageWand-*
+          path: dist
+          merge-multiple: true
+      - name: Fetch the notarized DMG from mac-v<VERSION>
+        if: needs.plan.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          # mac-release.yml runs in parallel on the same push; wait up to 60 min for it.
+          for i in $(seq 1 60); do
+            if gh release download "mac-v$VERSION" -R "$GITHUB_REPOSITORY" -D dist -p "StageWand-$VERSION.dmg*" 2>/dev/null; then
+              ls -l dist; exit 0
+            fi
+            sleep 60
+          done
+          echo "::warning::mac-v$VERSION has no DMG yet; publishing v$VERSION without it."
+      - name: Checksums
+        working-directory: dist
+        run: |
+          # Legacy names so README's releases/latest/download links keep working.
+          cp "StageWand-$VERSION-linux-x86_64.pkg.tar.zst" stagewand-host-x86_64.pkg.tar.zst
+          cp "StageWand-$VERSION-linux-amd64.deb" stagewand-host_amd64.deb
+          sha256sum StageWand-* stagewand-host* > SHA256SUMS
+          cat SHA256SUMS
+          ls -l
+      - name: Dry-run summary
+        if: needs.plan.outputs.publish != 'true'
+        run: |
+          echo "### Dry run: v$VERSION not published" >> "$GITHUB_STEP_SUMMARY"
+          (cd dist && ls -l) | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: needs.plan.outputs.publish != 'true'
+        with:
+          name: release-SHA256SUMS
+          path: dist/SHA256SUMS
+      - name: Publish GitHub Release v<VERSION>
+        if: needs.plan.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: Stage Wand ${{ env.VERSION }}
+          make_latest: true
+          fail_on_unmatched_files: true
+          body: |
+            Stage Wand ${{ env.VERSION }} for every platform, built by [this workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+            - **macOS**: `StageWand-${{ env.VERSION }}.dmg` (signed and notarized)
+            - **Windows**: `-windows-x64-setup.exe` installer or `-windows-x64.zip` portable. Not code-signed: SmartScreen will warn, choose *More info → Run anyway*.
+            - **Linux**: `-linux-amd64.deb` (Debian/Ubuntu), `-linux-x86_64.pkg.tar.zst` (Arch: `sudo pacman -U ./StageWand-${{ env.VERSION }}-linux-x86_64.pkg.tar.zst`), `-linux-x86_64.tar.gz` (portable headless host, see INSTALL.txt)
+            - **Android**: `StageWand-${{ env.VERSION }}-android.apk` (release-signed; enable installs from unknown sources)
+
+            Verify with `sha256sum -c SHA256SUMS`.
+          files: dist/*
