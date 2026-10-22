@@ -4,10 +4,11 @@
 const REPO = "EdmundLimBoEn/stage-wand";
 // Asset matching is by platform keyword + extension, across every release of
 // any tag scheme (mac-v*, linux, v*), newest published first. Each platform
-// lists patterns in preference order; the first release with any match wins.
+// lists patterns in preference order; the first pattern matched in the newest release wins.
 export const PLATFORMS = {
   mac:     [/\.dmg$/i],
   windows: [/win(dows)?.*\.(msi|exe|zip)$/i, /\.(msi|exe)$/i],
+  appimage: [/\.appimage$/i],
   linux:   [/linux.*\.appimage$/i, /\.appimage$/i, /linux.*\.tar\.gz$/i, /_amd64\.deb$/i],
   deb:     [/_amd64\.deb$/i],
   arch:    [/\.pkg\.tar\.zst$/i],
@@ -34,11 +35,13 @@ async function releases(ctx) {
 export function pickAsset(list, patterns) {
   const rels = list.filter((r) => !r.draft && !r.prerelease)
     .sort((x, y) => (y.published_at || "").localeCompare(x.published_at || ""));
-  for (const rel of rels) {
-    const names = rel.assets.filter((a) => !/\.(sha256|sig|asc|txt)$/i.test(a.name) && a.name !== "SHA256SUMS");
-    for (const re of patterns) {
-      // Shortest name first: prefers stable unversioned aliases when present.
-      const hit = names.filter((a) => re.test(a.name)).sort((a, b) => a.name.length - b.name.length)[0];
+  // Pattern order beats recency: the moving `linux` .deb release is
+  // republished on every main push and must not shadow a newer-format asset.
+  for (const re of patterns) {
+    for (const rel of rels) {
+      const hit = rel.assets
+        .filter((a) => !/\.(sha256|sig|asc|txt)$/i.test(a.name) && a.name !== "SHA256SUMS" && re.test(a.name))
+        .sort((a, b) => a.name.length - b.name.length)[0];
       if (hit) return hit;
     }
   }
