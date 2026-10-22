@@ -1,6 +1,6 @@
 module github.com/EdmundLimBoEn/stage-wand/host
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/go-ole/go-ole v1.2.6
