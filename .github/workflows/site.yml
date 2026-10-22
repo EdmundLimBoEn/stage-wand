@@ -1,0 +1,57 @@
+name: Site
+
+# Landing page at stagewand.sillyapps.co (Cloudflare Pages project `stagewand-site`).
+# Path-filtered so app changes never deploy the site and site changes never
+# need the iOS/Mac release workflows (those are path-filtered to their own trees).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-stagewand-site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate HTML
+        run: npx --yes html-validate@9 site/public/index.html
+      - name: Local references exist
+        run: |
+          set -euo pipefail
+          cd site/public
+          for f in $(grep -oE '(href|src)="[^"#:]+"' index.html | sed -E 's/.*="([^"]+)"/\1/' | grep -v '^/$'); do
+            test -f "$f" || { echo "::error::missing $f"; exit 1; }
+          done
+      - name: Download function asset selection
+        run: node site/functions/download/pick.test.mjs
+
+  deploy:
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: site
+          # Run from site/ so functions/ ships with public/.
+          command: pages deploy public --project-name stagewand-site --branch ${{ github.ref_name }}

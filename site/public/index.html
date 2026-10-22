@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stage Wand: a pocket presentation remote</title>
+<meta name="description" content="Stage Wand turns your phone's volume buttons into a slide clicker for Mac, Windows and Linux, with a trackpad behind a deliberate unlock.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0a0a0b">
+<link rel="canonical" href="https://stagewand.sillyapps.co/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="wrap site-header">
+  <a class="wordmark" href="/" aria-label="Stage Wand home">Stage Wand</a>
+  <nav class="top-nav" aria-label="Sections">
+    <a href="#setup">Setup</a>
+    <a href="#faq">Troubleshooting</a>
+    <a href="https://github.com/EdmundLimBoEn/stage-wand">Source</a>
+  </nav>
+</header>
+
+<main id="main">
+  <section class="wrap hero">
+    <p class="eyebrow">Presentation remote</p>
+    <h1>Advance your slides from your pocket.</h1>
+    <p class="lead">Volume up is the next slide. Volume down is the previous one. Stage Wand pairs your phone with the computer running the deck over Bluetooth or Wi&#8209;Fi, and keeps a trackpad behind a deliberate unlock gesture so nothing fires by accident.</p>
+    <div class="actions">
+      <a class="btn btn-primary" id="cta-primary" href="/download/mac" data-default>Download for macOS</a>
+      <a class="btn btn-ghost" id="cta-secondary" href="https://testflight.apple.com/join/JHGAMYwU">Join the iPhone beta</a>
+    </div>
+    <p class="fine" id="cta-note">Notarized Mac app, macOS 14 or later. iPhone beta via TestFlight, iOS 17 or later.</p>
+    <p class="other">Other platforms:
+      <a href="/download/mac">macOS</a>
+      <a href="#setup" data-tab="win">Windows</a>
+      <a href="/download/linux">Linux</a>
+      <a href="/download/arch">Arch Linux</a>
+      <a href="https://testflight.apple.com/join/JHGAMYwU">iPhone</a>
+      <a href="#setup" data-tab="android">Android</a>
+    </p>
+  </section>
+
+  <section class="wrap features" aria-label="What it does">
+    <div class="feature"><h2>Volume buttons, even when locked</h2><p>Up sends Right, down sends Left, so any slide app that listens for arrow keys follows along.</p></div>
+    <div class="feature"><h2>A trackpad when you need one</h2><p>Draw the guided square to unlock touch controls: move, click, scroll, and switch spaces.</p></div>
+    <div class="feature"><h2>No venue Wi&#8209;Fi required</h2><p>Bluetooth direct is the default. Wi&#8209;Fi nearby and a Cloudflare tunnel are there as fallbacks.</p></div>
+  </section>
+
+  <section class="wrap setup" id="setup" aria-labelledby="setup-title">
+    <p class="eyebrow">Setup</p>
+    <h2 class="section-title" id="setup-title">One computer, one phone.</h2>
+    <p class="section-lead">Install a host on the computer running the presentation, then a remote on your phone. Pick your platforms.</p>
+
+    <div class="tabs" role="tablist" aria-label="Platforms">
+      <button type="button" role="tab" id="t-mac" aria-controls="p-mac" aria-selected="true">Mac</button>
+      <button type="button" role="tab" id="t-win" aria-controls="p-win" aria-selected="false" tabindex="-1">Windows</button>
+      <button type="button" role="tab" id="t-linux" aria-controls="p-linux" aria-selected="false" tabindex="-1">Linux</button>
+      <button type="button" role="tab" id="t-ios" aria-controls="p-ios" aria-selected="false" tabindex="-1">iPhone</button>
+      <button type="button" role="tab" id="t-android" aria-controls="p-android" aria-selected="false" tabindex="-1">Android</button>
+    </div>
+
+    <article class="panel" role="tabpanel" id="p-mac" aria-labelledby="t-mac">
+      <h3>Mac <span class="tag">Host</span></h3>
+      <p class="req">macOS 14 or later. Notarized build.</p>
+      <ol>
+        <li><a href="/download/mac">Download Stage Wand for macOS</a> (latest release; <a href="https://github.com/EdmundLimBoEn/stage-wand/releases">checksums</a>), open it, and drag Stage Wand to Applications.</li>
+        <li>Launch it. A pairing window shows the four-digit code, connection status and listening port. Reopen it any time from the menu bar item.</li>
+        <li>On first launch, allow <strong>Accessibility</strong> (System Settings &rarr; Privacy &amp; Security &rarr; Accessibility), <strong>Bluetooth</strong>, and <strong>Local Network</strong>. Choose Allow if the firewall asks about incoming connections.</li>
+        <li>Optional: enable the Mission Control shortcuts Control+Left, Control+Right and Control+Up in System Settings &rarr; Keyboard &rarr; Keyboard Shortcuts &rarr; Mission Control to switch spaces from the phone.</li>
+      </ol>
+      <details><summary>Build from source</summary>
+<pre><code>make -C mac app &amp;&amp; open ~/Applications/StageWandMac.app</code></pre>
+      </details>
+    </article>
+
+    <article class="panel" role="tabpanel" id="p-win" aria-labelledby="t-win">
+      <h3>Windows <span class="tag">Host</span></h3>
+      <p class="req">Prebuilt download coming soon. Build from source with Go for now.</p>
+      <ol>
+        <li>Install Go and clone the <a href="https://github.com/EdmundLimBoEn/stage-wand">repository</a>.</li>
+        <li>Build and run the host:
+<pre><code>cd host
+go build -o stagewand-host.exe .\cmd\stagewand-host
+stagewand-host.exe</code></pre></li>
+        <li>Allow the app through Windows Firewall when it binds, and turn Bluetooth on in Windows Settings.</li>
+        <li>The console shows the pairing code, listen address and Bluetooth status. Type <code>k</code> and Enter to disconnect the phone and rotate the code.</li>
+      </ol>
+      <p class="note">Space chords map to Win+Ctrl+Left and Win+Ctrl+Right (virtual desktops) and Win+Tab (Task View).</p>
+    </article>
+
+    <article class="panel" role="tabpanel" id="p-linux" aria-labelledby="t-linux">
+      <h3>Linux <span class="tag">Host</span></h3>
+      <p class="req">Packages for Arch Linux (x86_64) and Debian/Ubuntu (amd64: Ubuntu 22.04/24.04, Debian 12/13). Works on Wayland and X11.</p>
+      <h4>Arch Linux</h4>
+<pre><code>curl -fL -o stagewand-host-x86_64.pkg.tar.zst https://stagewand.sillyapps.co/download/arch
+sudo pacman -U ./stagewand-host-x86_64.pkg.tar.zst</code></pre>
+      <h4>Debian or Ubuntu</h4>
+<pre><code>curl -fL -o stagewand-host_amd64.deb https://stagewand.sillyapps.co/download/deb
+sudo apt install ./stagewand-host_amd64.deb</code></pre>
+      <ol>
+        <li>Enable Bluetooth: <code>sudo systemctl enable --now bluetooth</code>, with a Bluetooth LE peripheral-capable adapter powered on.</li>
+        <li>Launch <strong>Stage Wand</strong> from the application menu, or run <code>stagewand</code>. The tray app shows the pairing code, input readiness, Bluetooth status and LAN address.</li>
+        <li>If <code>/dev/uinput</code> is not yet writable, log out of the graphical session and back in.</li>
+      </ol>
+      <p class="note">Checksums are on the <a href="https://github.com/EdmundLimBoEn/stage-wand/releases">release page</a>. Building from source and the CLI-only host are covered in the <a href="https://github.com/EdmundLimBoEn/stage-wand#linux-host">README</a>.</p>
+    </article>
+
+    <article class="panel" role="tabpanel" id="p-ios" aria-labelledby="t-ios">
+      <h3>iPhone <span class="tag">Remote</span></h3>
+      <p class="req">iOS 17 or later. Public beta through TestFlight.</p>
+      <ol>
+        <li>Install TestFlight, then <a href="https://testflight.apple.com/join/JHGAMYwU">join the Stage Wand beta</a>.</li>
+        <li>Open Stage Wand. Allow <strong>Bluetooth</strong> and <strong>Local Network</strong> when asked.</li>
+        <li>Draw the square to unlock touch controls, open Settings, and type the four-digit code from the host, including leading zeros. <strong>Bluetooth direct</strong> is the default route.</li>
+        <li>Wait for the connected state, start your slideshow, and keep media volume near the middle so presses are never at a limit.</li>
+      </ol>
+    </article>
+
+    <article class="panel" role="tabpanel" id="p-android" aria-labelledby="t-android">
+      <h3>Android <span class="tag">Remote</span></h3>
+      <p class="req">Store release coming soon. Build the APK from source for now.</p>
+      <ol>
+        <li>Open the <code>android/</code> folder in Android Studio (JDK 21, Android SDK 35) and run the <strong>app</strong> configuration, or build from the command line:
+<pre><code>cd android
+./gradlew :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk</code></pre></li>
+        <li>Allow Bluetooth, nearby devices (location on Android 12 and older), and notifications if asked.</li>
+        <li>Draw the square to unlock, enter the host pairing code in Settings, and leave <strong>Host address or tunnel URL</strong> empty. Keep <strong>Bluetooth</strong> selected, or switch to <strong>Wi&#8209;Fi</strong>.</li>
+      </ol>
+      <p class="note">Volume keys work while Stage Wand is in the foreground. Pocket use with the screen off depends on the phone maker; use NEXT and PREV if volume presses do not arrive.</p>
+    </article>
+  </section>
+
+  <section class="wrap faq" id="faq" aria-labelledby="faq-title">
+    <p class="eyebrow">Troubleshooting</p>
+    <h2 class="section-title" id="faq-title">Permissions, mostly.</h2>
+    <div class="faq-list">
+      <details><summary>Connected, but the Mac ignores input</summary><p>Stage Wand needs Accessibility to send keys and pointer events. In System Settings &rarr; Privacy &amp; Security &rarr; Accessibility, make sure the copy you are running is the enabled entry; remove stale entries from older builds, re-add the app, and relaunch. Draw the square to unlock touch controls and keep the presentation app frontmost.</p></details>
+      <details><summary>Bluetooth direct stays on Connecting</summary><p>Check Bluetooth is on for both devices. On a Mac, allow Stage Wand under Privacy &amp; Security &rarr; Bluetooth. On Linux, run <code>bluetoothctl show</code> and confirm the adapter is powered. On Windows, turn Bluetooth on in Settings. Allow Bluetooth for Stage Wand on the phone, then relaunch the host. Only one Stage Wand host should be advertising nearby.</p></details>
+      <details><summary>The phone cannot find the computer over Wi&#8209;Fi</summary><p>Allow Local Network on the iPhone (Settings &rarr; Privacy &amp; Security &rarr; Local Network) and reopen the app. Or enter the computer's IP and port by hand, such as <code>192.168.1.20:8787</code>, using the port the host shows. Guest networks often isolate devices; use your iPhone's Personal Hotspot instead.</p></details>
+      <details><summary>Volume presses do not register</summary><p>Keep media volume away from the maximum and minimum, and keep Stage Wand running. Reopen it after an audio interruption. The on-screen NEXT and PREV buttons always work once unlocked.</p></details>
+      <details><summary>The pairing code was rejected</summary><p>Read the current code from the host; disconnecting rotates it. After five failed attempts, wait 30 seconds or choose Disconnect &amp; new code.</p></details>
+      <details><summary>Linux says input is unavailable</summary><p>Run <code>stagewand-host --diagnose</code> from the graphical session. The host needs a loaded <code>uinput</code> module and the seat ACL, which applies after you log out and back in. Do not add yourself to the <code>input</code> group.</p></details>
+      <details><summary>Why does the phone lock its touch controls?</summary><p>So a pocket brush cannot click or skip. Hardware volume buttons keep working while touch is locked. Trace the guided square deliberately to unlock; leaving the app or locking the screen relocks it.</p></details>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap site-footer">
+  <p>Stage Wand is a <a href="https://sillyapps.co">sillyapps.co</a> project. <a href="https://github.com/EdmundLimBoEn/stage-wand/blob/main/docs/privacy.md">Privacy</a></p>
+</footer>
+<script src="tabs.js" defer></script>
+</body>
+</html>
