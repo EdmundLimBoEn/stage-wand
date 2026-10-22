@@ -18,4 +18,8 @@ assert.equal(n("arch"), "stagewand-host-x86_64.pkg.tar.zst");
 assert.equal(n("android"), undefined);
 assert.equal(n("mac", L.slice(1)), "StageWand-0.1.0.dmg");
 assert.equal(n("windows", L.slice(1)), undefined);
+const newerDeb = [{ tag_name: "linux", published_at: "2026-12-01T00:00:00Z", assets: [{ name: "stagewand-host_amd64.deb" }] }, ...L];
+assert.equal(n("linux", newerDeb), "StageWand-0.2.0-linux-x86_64.AppImage");
+assert.equal(n("appimage"), "StageWand-0.2.0-linux-x86_64.AppImage");
+assert.equal(n("linux", L.slice(1)), "stagewand-host_amd64.deb");
 console.log("pickAsset ok");
