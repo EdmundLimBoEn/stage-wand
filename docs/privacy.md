@@ -16,4 +16,4 @@ Stage Wand is a presentation remote. The phone app (iOS and Android) controls sl
 
 **Children.** Stage Wand is not directed at children and collects no personal data from anyone.
 
-**Contact.** FEEDBACK_EMAIL_PLACEHOLDER, or open an issue at https://github.com/EdmundLimBoEn/stage-wand/issues.
+**Contact.** edmund@sillyapps.co, or open an issue at https://github.com/EdmundLimBoEn/stage-wand/issues.

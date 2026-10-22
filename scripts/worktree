@@ -12,7 +12,7 @@ Usage:
 
 setup  Configures hooks, ensures local `dev`, and adds a locked `main` worktree.
 add    Creates ../stage-wand-trees/<path> on branch feat/<slug> from base (default: dev).
-       Pass a slashy name (hotfix/foo) to use that branch name as-is.
+       Pass a slashy name (fix/foo, chore/foo) to use that branch name as-is.
 rm     Removes the worktree and deletes the local branch if it is fully merged.
 list   Shows git worktree list.
 EOF

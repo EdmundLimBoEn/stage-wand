@@ -37,7 +37,7 @@ func TestArchUinputPackaging(t *testing.T) {
 			t.Fatalf("PKGBUILD must not depend on %s", dep)
 		}
 	}
-	if !strings.Contains(pkgbuild, "makedepends=('go>=1.26.9' 'gcc' 'cmake')") {
+	if !strings.Contains(pkgbuild, "makedepends=('go>=1.26.10' 'gcc' 'cmake')") {
 		t.Fatal("PKGBUILD must require the supported Go toolchain and core/gcc")
 	}
 	if !strings.Contains(pkgbuild, "-buildvcs=false") {

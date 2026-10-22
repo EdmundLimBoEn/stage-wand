@@ -8,11 +8,20 @@ export async function startTunnelGate(options: {
     if (!/^[A-Za-z0-9_-]{43}$/.test(options.secret)) throw new Error("Invalid tunnel capability");
     const path = `/${options.secret}`;
     const sockets = new Set<Socket>();
+    const preAuth = new Set<Socket>();
     let upgraded = 0;
     const server = createServer((socket) => {
+        if (preAuth.size >= 64) { socket.destroy(); return; }
+        preAuth.add(socket);
         socket.setNoDelay(true);
         sockets.add(socket);
-        socket.on("close", () => sockets.delete(socket));
+        // Unlike the inactivity timeout, incoming bytes cannot extend this deadline.
+        const headerDeadline = setTimeout(() => socket.destroy(), 10_000);
+        socket.on("close", () => {
+            clearTimeout(headerDeadline);
+            preAuth.delete(socket);
+            sockets.delete(socket);
+        });
         socket.on("error", () => socket.destroy());
         socket.setTimeout(10_000, () => socket.destroy());
         let pending = Buffer.alloc(0);
@@ -27,6 +36,7 @@ export async function startTunnelGate(options: {
                 return;
             }
             socket.removeListener("data", handshake);
+            clearTimeout(headerDeadline);
             if (end > 16_384) { socket.destroy(); return; }
             const header = pending.subarray(0, end).toString("latin1");
             const lines = header.split("\r\n");
@@ -40,6 +50,7 @@ export async function startTunnelGate(options: {
             if (!isUpgrade) { reply("200 OK", "StageWand tunnel ready\n"); return; }
             if (upgraded >= 32) { reply("503 Service Unavailable"); return; }
             upgraded++;
+            preAuth.delete(socket);
             socket.pause();
             socket.setTimeout(0);
             const origin = connect({ host: "127.0.0.1", port: options.originPort });

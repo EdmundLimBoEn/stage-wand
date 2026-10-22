@@ -20,7 +20,11 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class Link(
     private val discovery: Discovery,
-    private val bluetooth: BluetoothClient
+    private val bluetooth: BluetoothClient,
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .pingInterval(15, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
+        .build()
 ) {
     enum class State {
         Searching, Connecting, EnterCode, Authed, Disconnected, LocalNetworkDenied, BluetoothDenied
@@ -37,10 +41,6 @@ class Link(
     var onChange: (() -> Unit)? = null
 
     private val main = Handler(Looper.getMainLooper())
-    private val client = OkHttpClient.Builder()
-        .pingInterval(15, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(false)
-        .build()
     private var socket: WebSocket? = null
     private var closed = false
     private var started = false
@@ -211,6 +211,9 @@ class Link(
             return
         }
         socket = client.newWebSocket(request, object : WebSocketListener() {
+            // Reset removes queued callbacks, so each connection needs its own counter.
+            private val pendingMessages = AtomicInteger(0)
+
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 main.post {
                     if (generation.get() != id) return@post
@@ -218,10 +221,22 @@ class Link(
                 }
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
-                main.post {
-                    if (generation.get() != id) return@post
-                    handleReply(Reply.decode(text))
+                if (generation.get() != id) return
+                if (text.length > 16 * 1024 || text.toByteArray(StandardCharsets.UTF_8).size > 16 * 1024) {
+                    webSocket.close(1009, "Reply exceeds 16 KiB")
+                    return
                 }
+                if (pendingMessages.incrementAndGet() > 64) {
+                    pendingMessages.decrementAndGet()
+                    return
+                }
+                if (!main.post {
+                    try {
+                        if (generation.get() == id) handleReply(Reply.decode(text))
+                    } finally {
+                        pendingMessages.decrementAndGet()
+                    }
+                }) pendingMessages.decrementAndGet()
             }
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 webSocket.close(code, reason)

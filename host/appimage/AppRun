@@ -1,0 +1,12 @@
+#!/bin/sh
+# Stage Wand AppImage entry point: the GUI by default, the bundled host for CLI flags.
+here="$(dirname "$(readlink -f "$0")")"
+export PATH="$here/usr/bin:$PATH"
+case "$1" in
+  --host) shift; exec "$here/usr/bin/stagewand-host" "$@" ;;
+  --version|--diagnose|--selftest|--serve|--dry-run|--json-status|--code|--name|-h|--help)
+    exec "$here/usr/bin/stagewand-host" "$@" ;;
+esac
+# linuxdeploy-plugin-qt hook sets QT_PLUGIN_PATH etc.
+for hook in "$here"/apprun-hooks/*.sh; do [ -f "$hook" ] && . "$hook"; done
+exec "$here/usr/bin/stagewand" "$@"
