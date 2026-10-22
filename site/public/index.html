@@ -61,7 +61,7 @@
       <button type="button" role="tab" id="t-android" aria-controls="p-android" aria-selected="false" tabindex="-1">Android</button>
     </div>
 
-    <article class="panel" role="tabpanel" id="p-mac" aria-labelledby="t-mac">
+    <div class="panel" role="tabpanel" id="p-mac" aria-labelledby="t-mac">
       <h3>Mac <span class="tag">Host</span></h3>
       <p class="req">macOS 14 or later. Notarized build.</p>
       <ol>
@@ -73,9 +73,9 @@
       <details><summary>Build from source</summary>
 <pre><code>make -C mac app &amp;&amp; open ~/Applications/StageWandMac.app</code></pre>
       </details>
-    </article>
+    </div>
 
-    <article class="panel" role="tabpanel" id="p-win" aria-labelledby="t-win">
+    <div class="panel" role="tabpanel" id="p-win" aria-labelledby="t-win">
       <h3>Windows <span class="tag">Host</span></h3>
       <p class="req">Prebuilt download coming soon. Build from source with Go for now.</p>
       <ol>
@@ -88,9 +88,9 @@ stagewand-host.exe</code></pre></li>
         <li>The console shows the pairing code, listen address and Bluetooth status. Type <code>k</code> and Enter to disconnect the phone and rotate the code.</li>
       </ol>
       <p class="note">Space chords map to Win+Ctrl+Left and Win+Ctrl+Right (virtual desktops) and Win+Tab (Task View).</p>
-    </article>
+    </div>
 
-    <article class="panel" role="tabpanel" id="p-linux" aria-labelledby="t-linux">
+    <div class="panel" role="tabpanel" id="p-linux" aria-labelledby="t-linux">
       <h3>Linux <span class="tag">Host</span></h3>
       <p class="req">Packages for Arch Linux (x86_64) and Debian/Ubuntu (amd64: Ubuntu 22.04/24.04, Debian 12/13). Works on Wayland and X11.</p>
       <h4>Arch Linux</h4>
@@ -105,9 +105,9 @@ sudo apt install ./stagewand-host_amd64.deb</code></pre>
         <li>If <code>/dev/uinput</code> is not yet writable, log out of the graphical session and back in.</li>
       </ol>
       <p class="note">Checksums are on the <a href="https://github.com/EdmundLimBoEn/stage-wand/releases">release page</a>. Building from source and the CLI-only host are covered in the <a href="https://github.com/EdmundLimBoEn/stage-wand#linux-host">README</a>.</p>
-    </article>
+    </div>
 
-    <article class="panel" role="tabpanel" id="p-ios" aria-labelledby="t-ios">
+    <div class="panel" role="tabpanel" id="p-ios" aria-labelledby="t-ios">
       <h3>iPhone <span class="tag">Remote</span></h3>
       <p class="req">iOS 17 or later. Public beta through TestFlight.</p>
       <ol>
@@ -116,9 +116,9 @@ sudo apt install ./stagewand-host_amd64.deb</code></pre>
         <li>Draw the square to unlock touch controls, open Settings, and type the four-digit code from the host, including leading zeros. <strong>Bluetooth direct</strong> is the default route.</li>
         <li>Wait for the connected state, start your slideshow, and keep media volume near the middle so presses are never at a limit.</li>
       </ol>
-    </article>
+    </div>
 
-    <article class="panel" role="tabpanel" id="p-android" aria-labelledby="t-android">
+    <div class="panel" role="tabpanel" id="p-android" aria-labelledby="t-android">
       <h3>Android <span class="tag">Remote</span></h3>
       <p class="req">Store release coming soon. Build the APK from source for now.</p>
       <ol>
@@ -130,7 +130,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk</code></pre></li>
         <li>Draw the square to unlock, enter the host pairing code in Settings, and leave <strong>Host address or tunnel URL</strong> empty. Keep <strong>Bluetooth</strong> selected, or switch to <strong>Wi&#8209;Fi</strong>.</li>
       </ol>
       <p class="note">Volume keys work while Stage Wand is in the foreground. Pocket use with the screen off depends on the phone maker; use NEXT and PREV if volume presses do not arrive.</p>
-    </article>
+    </div>
   </section>
 
   <section class="wrap faq" id="faq" aria-labelledby="faq-title">
