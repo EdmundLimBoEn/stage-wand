@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           cd site/public
-          for f in $(grep -oE '(href|src)="[^"#:]+"' index.html | sed -E 's/.*="([^"]+)"/\1/' | grep -v '^/$'); do
+          for f in $(grep -oE '(href|src)="[^"#:]+"' index.html | sed -E 's/.*="([^"]+)"/\1/' | grep -v '^/'); do
             test -f "$f" || { echo "::error::missing $f"; exit 1; }
           done
       - name: Download function asset selection
