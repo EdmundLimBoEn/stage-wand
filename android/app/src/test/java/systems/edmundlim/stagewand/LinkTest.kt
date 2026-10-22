@@ -266,8 +266,39 @@ class LinkTest {
         assertEquals(Link.State.Authed, link.state)
     }
 
+    @Test
+    fun displacedWebSocketDoesNotReconnectFromTimerOrDiscovery() {
+        val listeners = mutableListOf<WebSocketListener>()
+        `when`(discovery.results).thenReturn(listOf(HostService("host", "127.0.0.1", 9000)))
+        val (listener, socket) = startWebSocket(listeners, Settings(pairingCode = "1234", transport = "wifi"))
+        listener.onMessage(socket, "{\"t\":\"status\"}")
+        drain()
+        listener.onMessage(socket, "{\"t\":\"bye\",\"reason\":\"displaced\"}")
+        drain()
+        listener.onClosed(socket, 1000, "")
+        onResults?.invoke()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(60))
+        assertEquals(Link.State.Disconnected, link.state)
+        assertEquals(1, listeners.size)
+        link.start()
+        assertEquals(2, listeners.size)
+    }
+
+    @Test
+    fun kickedRequiresCodeEntryWithoutReconnect() {
+        start()
+        attempts.single().data("{\"t\":\"bye\",\"reason\":\"kicked\"}".toByteArray())
+        drain()
+        assertEquals(Link.State.EnterCode, link.state)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(60))
+        assertEquals(1, attempts.size)
+        link.update(Settings(pairingCode = "5678"))
+        assertEquals(2, attempts.size)
+    }
+
     private fun startWebSocket(
-        listeners: MutableList<WebSocketListener> = mutableListOf()
+        listeners: MutableList<WebSocketListener> = mutableListOf(),
+        settings: Settings = Settings(pairingCode = "1234", manualHost = "ws://localhost:9000")
     ): Pair<WebSocketListener, WebSocket> {
         link.close()
         val client = mock(OkHttpClient::class.java, RETURNS_DEEP_STUBS)
@@ -277,7 +308,7 @@ class LinkTest {
             socket
         }.`when`(client).newWebSocket(any(), any())
         link = Link(discovery, bluetooth, client)
-        link.update(Settings(pairingCode = "1234", manualHost = "ws://localhost:9000"))
+        link.update(settings)
         link.start()
         return listeners.single() to socket
     }

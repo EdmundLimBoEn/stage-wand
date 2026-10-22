@@ -12,23 +12,28 @@ import (
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/control"
 	"github.com/EdmundLimBoEn/stage-wand/host/internal/protocol"
 	"github.com/gorilla/websocket"
+	"golang.org/x/net/netutil"
 )
 
 type Config struct {
-	Ports      []int
-	AuthWait   time.Duration
-	PingEvery  time.Duration
-	PongWait   time.Duration
-	MaxMessage int64
+	ReadTimeout time.Duration
+	IdleTimeout time.Duration
+	Ports       []int
+	AuthWait    time.Duration
+	PingEvery   time.Duration
+	PongWait    time.Duration
+	MaxMessage  int64
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Ports:      []int{8787, 8788, 8789, 8790},
-		AuthWait:   2 * time.Second,
-		PingEvery:  3 * time.Second,
-		PongWait:   6 * time.Second,
-		MaxMessage: 16384,
+		ReadTimeout: 15 * time.Second,
+		IdleTimeout: 60 * time.Second,
+		Ports:       []int{8787, 8788, 8789, 8790},
+		AuthWait:    2 * time.Second,
+		PingEvery:   3 * time.Second,
+		PongWait:    6 * time.Second,
+		MaxMessage:  16384,
 	}
 }
 
@@ -61,6 +66,12 @@ type peer struct {
 }
 
 func New(session *Session, cfg Config, onCommand func(protocol.Command)) *Server {
+	if cfg.ReadTimeout == 0 {
+		cfg.ReadTimeout = 15 * time.Second
+	}
+	if cfg.IdleTimeout == 0 {
+		cfg.IdleTimeout = 60 * time.Second
+	}
 	if cfg.AuthWait == 0 {
 		cfg.AuthWait = 2 * time.Second
 	}
@@ -100,11 +111,19 @@ func (s *Server) Start() (int, error) {
 			continue
 		}
 		actual := ln.Addr().(*net.TCPAddr).Port
+		// Keep the admission slot until Close, including after WebSocket hijacking.
+		ln = netutil.LimitListener(ln, 128)
 		s.listener = ln
 		s.session.SetPort(actual)
 		mux := http.NewServeMux()
 		mux.HandleFunc("/", s.handle)
-		s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+		s.http = &http.Server{
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       s.cfg.ReadTimeout,
+			IdleTimeout:       s.cfg.IdleTimeout,
+			MaxHeaderBytes:    16 * 1024,
+		}
 		go s.http.Serve(ln)
 		return actual, nil
 	}
@@ -160,8 +179,11 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	if tcp, ok := conn.UnderlyingConn().(*net.TCPConn); ok {
-		_ = tcp.SetNoDelay(true)
+	// Hijacked connections must not inherit the HTTP request deadline.
+	// Authentication and heartbeat timers bound WebSocket lifetime instead.
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		conn.Close()
+		return
 	}
 	conn.SetReadLimit(s.cfg.MaxMessage)
 	p := &peer{

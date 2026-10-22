@@ -44,6 +44,7 @@ class Link(
     private var socket: WebSocket? = null
     private var closed = false
     private var started = false
+    private var reconnectSuppressed = false
     private var reconnectAttempt = 0
     private var live = false
     private var settings = Settings()
@@ -72,6 +73,7 @@ class Link(
             settings.transport != this.settings.transport
         this.settings = settings
         if (!reconnect) return
+        reconnectSuppressed = false
         resetConnection()
         reconnectAttempt = 0
         failureMessage = null
@@ -90,6 +92,7 @@ class Link(
 
     fun start() {
         if (closed) return
+        reconnectSuppressed = false
         started = true
         if (!hasPairingCode()) {
             failureMessage = null
@@ -111,7 +114,7 @@ class Link(
     }
 
     private fun connect() {
-        if (closed || !started || live) return
+        if (closed || !started || live || reconnectSuppressed) return
         if (!hasPairingCode()) {
             failureMessage = null
             state = State.EnterCode
@@ -265,7 +268,8 @@ class Link(
             }
             is Reply.Bye -> {
                 resetConnection()
-                state = if (reply.reason == "badauth") State.EnterCode else State.Disconnected
+                reconnectSuppressed = reply.reason == "displaced"
+                state = if (reply.reason == "badauth" || reply.reason == "kicked") State.EnterCode else State.Disconnected
                 failureMessage = if (reply.reason == "badauth") "Pairing code rejected. Enter the current code shown on the host. After repeated attempts, wait 30 seconds or choose Disconnect & new code on the host." else null
                 notifyChanged()
                 if (state == State.Disconnected) scheduleReconnect()
@@ -315,7 +319,7 @@ class Link(
     }
 
     private fun scheduleReconnect() {
-        if (closed) return
+        if (closed || reconnectSuppressed) return
         val id = generation.get()
         val delay = (1_000L shl reconnectAttempt.coerceAtMost(5)).coerceAtMost(30_000L)
         reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(5)
