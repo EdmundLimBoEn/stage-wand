@@ -1,6 +1,9 @@
 package systems.edmundlim.stagewand
 
 import android.os.Looper
+import okhttp3.OkHttpClient
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -189,6 +192,78 @@ class LinkTest {
         link.start()
         assertEquals(Link.State.Disconnected, link.state)
         assertTrue(link.failureMessage!!.contains("IPv4"))
+    }
+
+    @Test
+    fun oversizedWebSocketReplyIsClosedAndNeverHandled() {
+        val (listener, socket) = startWebSocket()
+        val text = "{\"t\":\"status\"}".padEnd(16 * 1024 + 1)
+        listener.onMessage(socket, text)
+        verify(socket).close(eq(1009), any())
+        drain()
+        assertEquals(Link.State.Connecting, link.state)
+    }
+
+    @Test
+    fun webSocketReplyLimitCountsUtf8Bytes() {
+        val (listener, socket) = startWebSocket()
+        val text = "{\"t\":\"bye\",\"reason\":\"${"é".repeat(8192)}\"}"
+        assertTrue(text.length < 16 * 1024)
+        listener.onMessage(socket, text)
+        verify(socket).close(eq(1009), any())
+        drain()
+        assertEquals(Link.State.Connecting, link.state)
+    }
+
+    @Test
+    fun webSocketReplyAtByteLimitIsAccepted() {
+        val (listener, socket) = startWebSocket()
+        listener.onMessage(socket, "{\"t\":\"status\"}".padEnd(16 * 1024))
+        drain()
+        assertEquals(Link.State.Authed, link.state)
+        verify(socket, never()).close(anyInt(), any())
+    }
+
+    @Test
+    fun webSocketQueueDropsOverflowAndRecoversAfterDraining() {
+        val (listener, socket) = startWebSocket()
+        repeat(63) { listener.onMessage(socket, "{}") }
+        listener.onMessage(socket, "{\"t\":\"status\"}")
+        repeat(100) { listener.onMessage(socket, "{\"t\":\"bye\",\"reason\":\"badauth\"}") }
+        drain()
+        assertEquals(Link.State.Authed, link.state)
+        listener.onMessage(socket, "{\"t\":\"bye\",\"reason\":\"badauth\"}")
+        drain()
+        assertEquals(Link.State.EnterCode, link.state)
+    }
+
+    @Test
+    fun reconnectHasFreshWebSocketQueueAfterPendingCallbacksAreRemoved() {
+        val listeners = mutableListOf<WebSocketListener>()
+        val (first, socket) = startWebSocket(listeners)
+        repeat(64) { first.onMessage(socket, "{}") }
+        link.update(Settings(pairingCode = "5678", manualHost = "ws://localhost:9000"))
+        assertEquals(2, listeners.size)
+        first.onMessage(socket, "{\"t\":\"bye\",\"reason\":\"badauth\"}")
+        listeners.last().onMessage(socket, "{\"t\":\"status\"}")
+        drain()
+        assertEquals(Link.State.Authed, link.state)
+    }
+
+    private fun startWebSocket(
+        listeners: MutableList<WebSocketListener> = mutableListOf()
+    ): Pair<WebSocketListener, WebSocket> {
+        link.close()
+        val client = mock(OkHttpClient::class.java, RETURNS_DEEP_STUBS)
+        val socket = mock(WebSocket::class.java)
+        doAnswer {
+            listeners.add(it.getArgument(1))
+            socket
+        }.`when`(client).newWebSocket(any(), any())
+        link = Link(discovery, bluetooth, client)
+        link.update(Settings(pairingCode = "1234", manualHost = "ws://localhost:9000"))
+        link.start()
+        return listeners.single() to socket
     }
 
     private fun start() {
