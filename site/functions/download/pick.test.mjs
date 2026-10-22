@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-const { pickAsset, PLATFORMS } = await import("./[platform].js");
+const { pickAsset, PLATFORMS, NAMES, fallbackAsset, tagFromLocation } = await import("./[platform].js");
 const L = [
   { tag_name: "v0.2.0", published_at: "2026-11-01T00:00:00Z", assets: [
     { name: "StageWand-0.2.0.dmg" }, { name: "StageWand-0.2.0.dmg.sha256" },
@@ -22,4 +22,28 @@ const newerDeb = [{ tag_name: "linux", published_at: "2026-12-01T00:00:00Z", ass
 assert.equal(n("linux", newerDeb), "StageWand-0.2.0-linux-x86_64.AppImage");
 assert.equal(n("appimage"), "StageWand-0.2.0-linux-x86_64.AppImage");
 assert.equal(n("linux", L.slice(1)), "stagewand-host_amd64.deb");
+
+// Fallback (API down): tag from the /releases/latest redirect + documented names.
+const base = "https://github.com/EdmundLimBoEn/stage-wand/releases";
+assert.equal(tagFromLocation(`${base}/tag/v0.1.0`), "v0.1.0");
+assert.equal(tagFromLocation(`${base}/tag/mac-v0.1.0`), null);
+assert.equal(tagFromLocation(`${base}`), null);
+assert.equal(tagFromLocation(null), null);
+const want = {
+  mac: "StageWand-0.1.0.dmg", windows: "StageWand-0.1.0-windows-x64.zip",
+  linux: "StageWand-0.1.0-linux-x86_64.AppImage", appimage: "StageWand-0.1.0-linux-x86_64.AppImage",
+  deb: "StageWand-0.1.0-linux-amd64.deb", arch: "StageWand-0.1.0-linux-x86_64.pkg.tar.zst",
+  android: "StageWand-0.1.0-android.apk",
+};
+assert.deepEqual(Object.keys(NAMES).sort(), Object.keys(PLATFORMS).sort());
+for (const [p, f] of Object.entries(want)) {
+  const a = fallbackAsset("v0.1.0", p);
+  assert.equal(a.name, f);
+  assert.equal(a.browser_download_url, `${base}/download/v0.1.0/${f}`);
+  // The API path picks a file matching the same platform patterns.
+  assert.ok(PLATFORMS[p].some((re) => re.test(f)), p);
+}
+assert.equal(fallbackAsset("linux", "deb"), null);
+assert.equal(fallbackAsset("v0.1.0", "toString"), null);
+assert.equal(fallbackAsset(null, "mac"), null);
 console.log("pickAsset ok");
