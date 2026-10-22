@@ -4,6 +4,7 @@
 #   StageWand-<v>.dmg (+ .sha256)                macOS, copied from mac-v<v> (mac-release.yml)
 #   StageWand-<v>-windows-x64.zip                Windows portable (stagewand-host.exe)
 #   StageWand-<v>-windows-x64-setup.exe          Windows installer (Inno Setup, unsigned)
+#   StageWand-<v>-linux-x86_64.AppImage         Linux GUI + host, any glibc >= 2.35 distro
 #   StageWand-<v>-linux-x86_64.tar.gz            Linux portable host binary + udev rules
 #   StageWand-<v>-linux-amd64.deb                Debian/Ubuntu package (host + Qt desktop app)
 #   StageWand-<v>-linux-x86_64.pkg.tar.zst       Arch Linux package (host + Qt desktop app)
@@ -32,6 +33,7 @@ on:
     paths:
       - ".github/workflows/release.yml"
       - "host/windows/**"
+      - "host/appimage/**"
       - "android/app/build.gradle.kts"
 
 permissions:
@@ -195,6 +197,102 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+  linux-appimage:
+    needs: plan
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: host/go.sum
+      - name: Install Qt 6 and AppImage tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake g++ qt6-base-dev qt6-base-dev-tools qt6-wayland libgl1-mesa-dev \
+            libfuse2 file patchelf desktop-file-utils xvfb xauth dbus-x11 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-render-util0 libxcb-image0
+          mkdir -p "$RUNNER_TEMP/tools"
+          cd "$RUNNER_TEMP/tools"
+          curl -fsSL -o linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSL -o linuxdeploy-plugin-qt https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy linuxdeploy-plugin-qt
+          echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
+      - name: Build GUI and host into an AppDir
+        run: |
+          set -euo pipefail
+          appdir="$RUNNER_TEMP/AppDir"
+          (cd host && CGO_ENABLED=1 go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=$VERSION" -o "$RUNNER_TEMP/stagewand-host" ./cmd/stagewand-host)
+          cmake -S host/desktop -B "$RUNNER_TEMP/desktop" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build "$RUNNER_TEMP/desktop" --parallel 4
+          DESTDIR="$appdir" cmake --install "$RUNNER_TEMP/desktop"
+          install -Dm755 "$RUNNER_TEMP/stagewand-host" "$appdir/usr/bin/stagewand-host"
+          install -Dm644 host/udev/70-stagewand-uinput.rules "$appdir/usr/share/stagewand/70-stagewand-uinput.rules"
+          install -Dm644 host/modules-load.d/uinput.conf "$appdir/usr/share/stagewand/uinput.conf"
+          install -Dm755 host/appimage/AppRun "$RUNNER_TEMP/AppRun"
+      - name: Package the AppImage
+        run: |
+          set -euo pipefail
+          appdir="$RUNNER_TEMP/AppDir"
+          export QMAKE=/usr/lib/qt6/bin/qmake
+          export EXTRA_PLATFORM_PLUGINS="libqwayland-generic.so;libqoffscreen.so"
+          export EXTRA_QT_MODULES="waylandcompositor"
+          export LDAI_OUTPUT="StageWand-$VERSION-linux-x86_64.AppImage"
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          linuxdeploy --appdir "$appdir" \
+            --executable "$appdir/usr/bin/stagewand" --executable "$appdir/usr/bin/stagewand-host" \
+            --desktop-file "$appdir/usr/share/applications/systems.[REDACTED].StageWand.desktop" \
+            --icon-file "$appdir/usr/share/icons/hicolor/scalable/apps/stagewand.svg" \
+            --custom-apprun "$RUNNER_TEMP/AppRun" \
+            --plugin qt --output appimage
+          mkdir -p out && mv "$LDAI_OUTPUT" out/
+          ls -l out
+          ls "$appdir/usr/plugins/platforms"
+      - name: Smoke test (CLI)
+        run: |
+          set -euo pipefail
+          ai="$PWD/out/StageWand-$VERSION-linux-x86_64.AppImage"
+          out=$("$ai" --appimage-extract-and-run --version); echo "$out"
+          [ "$out" = "stagewand-host $VERSION" ]
+          "$ai" --appimage-extract-and-run --diagnose
+          STAGEWAND_DRY_RUN=1 "$ai" --appimage-extract-and-run --selftest --dry-run
+          # Also plain FUSE mount, the way users run it.
+          "$ai" --version
+          # Every bundled ELF resolves its libraries.
+          cd "$RUNNER_TEMP" && rm -rf squashfs-root && "$ai" --appimage-extract >/dev/null
+          missing=$(find squashfs-root -type f \( -name '*.so*' -o -path '*/usr/bin/*' \) -exec sh -c 'file -b "$1" | grep -q ELF && LD_LIBRARY_PATH=squashfs-root/usr/lib ldd "$1" | grep "not found" | sed "s|^|$1: |"' _ {} \; || true)
+          [ -z "$missing" ] || { echo "$missing"; exit 1; }
+      - name: Smoke test (GUI under offscreen and xvfb)
+        run: |
+          set -euo pipefail
+          ai="$PWD/out/StageWand-$VERSION-linux-x86_64.AppImage"
+          for platform in offscreen xcb; do
+            log="$RUNNER_TEMP/gui-$platform.log"
+            run=(env QT_QPA_PLATFORM=$platform QT_DEBUG_PLUGINS=1 STAGEWAND_DRY_RUN=1 dbus-run-session -- "$ai" --appimage-extract-and-run)
+            [ "$platform" = xcb ] && run=(xvfb-run -a "${run[@]}")
+            "${run[@]}" > "$log" 2>&1 &
+            pid=$!
+            ok=false
+            for i in $(seq 1 40); do
+              if (exec 3<>/dev/tcp/127.0.0.1/8787) 2>/dev/null; then ok=true; break; fi
+              kill -0 $pid 2>/dev/null || break
+              sleep 0.5
+            done
+            alive=false; kill -0 $pid 2>/dev/null && alive=true
+            pkill -f stagewand-host || true; pkill -f 'squashfs-root|appimage_extracted' || true; kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true
+            if grep -Eiq 'could not (find|load) the Qt platform plugin|cannot load library|not found' "$log"; then cat "$log"; exit 1; fi
+            echo "$platform: GUI alive=$alive, host listening on 8787=$ok"
+            [ "$alive" = true ] && [ "$ok" = true ] || { cat "$log"; exit 1; }
+            grep -i 'loaded library' "$log" | head -5 || true
+            sleep 1
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StageWand-linux-appimage
+          path: out/*
+          if-no-files-found: error
+
   linux-arch:
     needs: plan
     runs-on: ubuntu-latest
@@ -268,7 +366,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [plan, windows, linux-portable, linux-deb, linux-arch, android]
+    needs: [plan, windows, linux-portable, linux-appimage, linux-deb, linux-arch, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -327,7 +425,7 @@ jobs:
 
             - **macOS**: `StageWand-${{ env.VERSION }}.dmg` (signed and notarized)
             - **Windows**: `-windows-x64-setup.exe` installer or `-windows-x64.zip` portable. Not code-signed: SmartScreen will warn, choose *More info → Run anyway*.
-            - **Linux**: `-linux-amd64.deb` (Debian/Ubuntu), `-linux-x86_64.pkg.tar.zst` (Arch: `sudo pacman -U ./StageWand-${{ env.VERSION }}-linux-x86_64.pkg.tar.zst`), `-linux-x86_64.tar.gz` (portable headless host, see INSTALL.txt)
+            - **Linux**: `-linux-x86_64.AppImage` (any distro: `chmod +x` and run; `--version`/`--diagnose` run the host), `-linux-amd64.deb` (Debian/Ubuntu), `-linux-x86_64.pkg.tar.zst` (Arch: `sudo pacman -U ./StageWand-${{ env.VERSION }}-linux-x86_64.pkg.tar.zst`), `-linux-x86_64.tar.gz` (portable headless host, see INSTALL.txt)
             - **Android**: `StageWand-${{ env.VERSION }}-android.apk` (release-signed; enable installs from unknown sources)
 
             Verify with `sha256sum -c SHA256SUMS`.
