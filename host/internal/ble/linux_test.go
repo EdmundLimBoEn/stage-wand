@@ -4,6 +4,7 @@ package ble
 
 import (
 	"bufio"
+	"net"
 	"os/exec"
 	"strings"
 	"sync"
@@ -18,6 +19,57 @@ import (
 
 const testAdapterPath dbus.ObjectPath = "/org/bluez/hci0"
 const testDevicePath dbus.ObjectPath = "/org/bluez/hci0/dev_00_11_22_33_44_55"
+
+func TestReplyPropertiesSnapshots(t *testing.T) {
+	// Property export needs a connection but no running bus or authentication.
+	local, remote := net.Pipe()
+	t.Cleanup(func() { _ = remote.Close() })
+	bus, err := dbus.NewConn(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bus.Close() })
+	properties, err := prop.Export(bus, replyPath, prop.Map{
+		gattIface: {"Value": {Value: []byte("original"), Emit: prop.EmitFalse}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &replyProperties{Properties: properties}
+	v, dbusErr := p.Get(gattIface, "Value")
+	if dbusErr != nil {
+		t.Fatal(dbusErr)
+	}
+	all, dbusErr := p.GetAll(gattIface)
+	if dbusErr != nil {
+		t.Fatal(dbusErr)
+	}
+	snapshots := [][]byte{v.Value().([]byte), all["Value"].Value().([]byte), p.GetMust(gattIface, "Value").([]byte)}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 1000; i++ {
+			p.SetMust(gattIface, "Value", []byte("changed!"))
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		for _, snapshot := range snapshots {
+			if string(snapshot) != "original" {
+				t.Error("updating reply mutated a retained snapshot")
+				break
+			}
+		}
+		_ = p.GetMust(gattIface, "Value").([]byte)
+		_, _ = p.Get(gattIface, "Value")
+		_, _ = p.GetAll(gattIface)
+	}
+	<-done
+	for _, snapshot := range snapshots {
+		if string(snapshot) != "original" {
+			t.Fatal("updating reply mutated a retained snapshot")
+		}
+	}
+}
 
 func TestBlueZWriteValidation(t *testing.T) {
 	valid := []byte(`{"t":"auth","code":"0000"}`)
