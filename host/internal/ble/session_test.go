@@ -180,3 +180,48 @@ func TestBadReauthenticationReleasesOwner(t *testing.T) {
 		t.Fatal("bad reauthentication retained ownership")
 	}
 }
+
+func TestBroadcastSessionRejectsConcurrentHandover(t *testing.T) {
+	commands := 0
+	session := NewSession(Hooks{Control: control.NewSession("0000"), OnCommand: func(protocol.Command) { commands++ }})
+	session.rejectHandover = true
+	auth := []byte(`{"t":"auth","code":"0000"}`)
+	key := []byte(`{"t":"key","k":"right"}`)
+	session.Handle("owner", auth)
+	var attempts sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		attempts.Add(1)
+		go func() {
+			defer attempts.Done()
+			actions := session.Handle("competitor", auth)
+			if len(actions) != 1 || actions[0].Drop != "competitor" || len(actions[0].Notify) != 0 {
+				t.Error("competing authentication must only drop the competitor")
+			}
+		}()
+	}
+	attempts.Wait()
+	if session.Authed() != "owner" {
+		t.Fatal("competing authentication displaced owner")
+	}
+	session.Handle("competitor", key)
+	session.Handle("owner", auth)
+	session.Handle("owner", key)
+	if commands != 1 {
+		t.Fatal("owner lost control or competitor dispatched input")
+	}
+	for _, kick := range []bool{false, true} {
+		if kick {
+			session.Kick()
+		} else {
+			session.Drop("owner")
+		}
+		session.Handle("competitor", auth)
+		if session.Authed() != "competitor" {
+			t.Fatal("new owner rejected after release")
+		}
+		session.Handle("competitor", key)
+	}
+	if commands != 3 {
+		t.Fatal("new owner could not dispatch input")
+	}
+}
