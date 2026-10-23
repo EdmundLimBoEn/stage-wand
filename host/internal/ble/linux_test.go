@@ -321,6 +321,86 @@ func TestBlueZRejectsSecondCentralWithoutBroadcastingBye(t *testing.T) {
 	}
 }
 
+func TestBlueZRetainsOwnerUntilExplicitRelease(t *testing.T) {
+	for _, release := range []string{"disconnect", "kick"} {
+		t.Run(release, func(t *testing.T) {
+			b := isolatedBlueZ(t)
+			var mu sync.Mutex
+			commands := 0
+			p := b.start(t, Hooks{OnCommand: func(protocol.Command) {
+				mu.Lock()
+				commands++
+				mu.Unlock()
+			}})
+			other := dbus.ObjectPath("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF")
+			device := &fakeDevice{}
+			if err := b.bus.Export(device, other, "org.bluez.Device1"); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.object(p, replyPath).Call(gattIface+".StartNotify", 0).Err; err != nil {
+				t.Fatal(err)
+			}
+			write := func(client dbus.ObjectPath, payload string) {
+				t.Helper()
+				options := map[string]dbus.Variant{"device": dbus.MakeVariant(client), "mtu": dbus.MakeVariant(uint16(185))}
+				if err := b.object(p, commandPath).Call(gattIface+".WriteValue", 0, []byte(payload), options).Err; err != nil {
+					t.Fatal(err)
+				}
+			}
+			auth := `{"t":"auth","code":"0000"}`
+			key := `{"t":"key","k":"right"}`
+			write(testDevicePath, auth)
+			// Repeated retries with the valid code must never displace the owner.
+			for i := 0; i < 3; i++ {
+				write(other, auth)
+				if p.session.Authed() != string(testDevicePath) {
+					t.Fatal("competing client displaced the connected owner")
+				}
+				if got := string(p.reply.GetMust(gattIface, "Value").([]byte)); got != `{"t":"status"}` {
+					t.Fatal("competing client changed the broadcast reply")
+				}
+			}
+			device.mu.Lock()
+			drops := device.disconnects
+			device.mu.Unlock()
+			b.device.mu.Lock()
+			ownerDrops := b.device.disconnects
+			b.device.mu.Unlock()
+			if drops != 3 || ownerDrops != 0 {
+				t.Fatalf("disconnects: competitor=%d owner=%d", drops, ownerDrops)
+			}
+			write(other, key)
+			write(testDevicePath, auth) // The owner may reauthenticate.
+			write(testDevicePath, key)
+			mu.Lock()
+			got := commands
+			mu.Unlock()
+			if got != 1 {
+				t.Fatalf("owner lost control or competitor dispatched input: %d commands", got)
+			}
+			if release == "kick" {
+				p.Kick()
+			} else {
+				if err := b.bus.Emit(testDevicePath, "org.freedesktop.DBus.Properties.PropertiesChanged", "org.bluez.Device1", map[string]dbus.Variant{"Connected": dbus.MakeVariant(false)}, []string{}); err != nil {
+					t.Fatal(err)
+				}
+				waitFor(t, func() bool { return p.session.Authed() == "" })
+			}
+			write(other, auth)
+			if p.session.Authed() != string(other) {
+				t.Fatal("explicit release did not allow a new owner")
+			}
+			write(other, key)
+			mu.Lock()
+			got = commands
+			mu.Unlock()
+			if got != 2 {
+				t.Fatal("new owner could not dispatch input")
+			}
+		})
+	}
+}
+
 func TestBlueZDisconnectAndDaemonRestart(t *testing.T) {
 	b := isolatedBlueZ(t)
 	p := b.start(t, Hooks{})

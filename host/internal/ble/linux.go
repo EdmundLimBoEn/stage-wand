@@ -75,6 +75,8 @@ func startLinuxBus(hooks Hooks, localName string, bus *dbus.Conn) (*linuxPeriphe
 	p := &linuxPeripheral{bus: bus, done: make(chan struct{}), watchDone: make(chan struct{}), signals: make(chan *dbus.Signal, 32)}
 	hooks.OnActions = p.apply
 	p.session = NewSession(hooks)
+	// BlueZ notifications are broadcast, so require release before handover.
+	p.session.rejectHandover = true
 	if err := p.exportGATT(); err != nil {
 		return nil, err
 	}
