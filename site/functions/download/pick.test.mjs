@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 const { pickAsset, PLATFORMS, NAMES, fallbackAsset, tagFromLocation } = await import("./[platform].js");
 const L = [
   { tag_name: "v0.2.0", published_at: "2026-11-01T00:00:00Z", assets: [
@@ -47,3 +48,53 @@ assert.equal(fallbackAsset("linux", "deb"), null);
 assert.equal(fallbackAsset("v0.1.0", "toString"), null);
 assert.equal(fallbackAsset(null, "mac"), null);
 console.log("pickAsset ok");
+
+const { onRequest } = await import("./[platform].js");
+for (const scenario of [
+  { name: "missing guessed DMG uses stale release", guessed: 404, stale: true, older: 200, status: 200 },
+  { name: "successful guessed DMG skips stale cache", guessed: 200, stale: true, older: 200, status: 200 },
+  { name: "missing guessed DMG without stale match returns 502", guessed: 404, stale: false, older: 200, status: 502 },
+  { name: "missing guessed and stale DMGs return 502", guessed: 404, stale: true, older: 404, status: 502 },
+]) {
+  test(scenario.name, async (t) => {
+    const guessed = fallbackAsset("v0.2.0", "mac");
+    const older = fallbackAsset("v0.1.0", "mac");
+    const downloads = [];
+    let staleReads = 0;
+    const originalCaches = Object.getOwnPropertyDescriptor(globalThis, "caches");
+    Object.defineProperty(globalThis, "caches", { configurable: true, value: { default: {
+      async match(request) {
+        if (!request.url.includes("/releases-stale/")) return undefined;
+        staleReads++;
+        return Response.json([{ assets: scenario.stale ? [older] : [] }]);
+      },
+    } } });
+    t.after(() => {
+      if (originalCaches) Object.defineProperty(globalThis, "caches", originalCaches);
+      else delete globalThis.caches;
+    });
+    t.mock.method(globalThis, "fetch", async (url) => {
+      if (url.startsWith("https://api.github.com/")) return new Response(null, { status: 403 });
+      if (url === `${base}/latest`) return new Response(null, {
+        status: 302, headers: { Location: `${base}/tag/v0.2.0` },
+      });
+      downloads.push(url);
+      if (url === guessed.browser_download_url) return new Response("latest DMG", { status: scenario.guessed });
+      assert.equal(url, older.browser_download_url);
+      return new Response("older DMG", { status: scenario.older, headers: { "Content-Length": "9" } });
+    });
+    const response = await onRequest({
+      params: { platform: "mac" }, request: new Request("https://stagewand.example/download/mac"),
+    });
+    assert.equal(response.status, scenario.status);
+    assert.equal(staleReads, scenario.guessed === 200 ? 0 : 1);
+    assert.deepEqual(downloads, [guessed.browser_download_url,
+      ...(scenario.guessed !== 200 && scenario.stale ? [older.browser_download_url] : [])]);
+    if (response.ok) {
+      const selected = scenario.guessed === 200 ? guessed : older;
+      assert.equal(response.headers.get("Content-Disposition"), `attachment; filename="${selected.name}"`);
+      assert.equal(await response.text(), scenario.guessed === 200 ? "latest DMG" : "older DMG");
+      if (selected === older) assert.equal(response.headers.get("Content-Length"), "9");
+    }
+  });
+}
