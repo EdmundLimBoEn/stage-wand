@@ -55,6 +55,10 @@ for (const scenario of [
   { name: "successful guessed DMG skips stale cache", guessed: 200, stale: true, older: 200, status: 200 },
   { name: "missing guessed DMG without stale match returns 502", guessed: 404, stale: false, older: 200, status: 502 },
   { name: "missing guessed and stale DMGs return 502", guessed: 404, stale: true, older: 404, status: 502 },
+  { name: "rejected guessed DMG uses stale release", guessed: "throw", stale: true, older: 200, status: 200 },
+  { name: "rejected guessed DMG without stale match returns 502", guessed: "throw", stale: false, older: 200, status: 502 },
+  { name: "rejected guessed and stale DMGs return 502", guessed: "throw", stale: true, older: "throw", status: 502 },
+  { name: "missing guessed and rejected stale DMGs return 502", guessed: 404, stale: true, older: "throw", status: 502 },
 ]) {
   test(scenario.name, async (t) => {
     const guessed = fallbackAsset("v0.2.0", "mac");
@@ -79,8 +83,12 @@ for (const scenario of [
         status: 302, headers: { Location: `${base}/tag/v0.2.0` },
       });
       downloads.push(url);
-      if (url === guessed.browser_download_url) return new Response("latest DMG", { status: scenario.guessed });
+      if (url === guessed.browser_download_url) {
+        if (scenario.guessed === "throw") throw new TypeError("fetch failed");
+        return new Response("latest DMG", { status: scenario.guessed });
+      }
       assert.equal(url, older.browser_download_url);
+      if (scenario.older === "throw") throw new TypeError("fetch failed");
       return new Response("older DMG", { status: scenario.older, headers: { "Content-Length": "9" } });
     });
     const response = await onRequest({

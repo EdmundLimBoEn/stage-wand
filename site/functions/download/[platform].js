@@ -112,23 +112,27 @@ export async function onRequest(ctx) {
   }
   if (!asset) return Response.redirect(fallback, 302);
 
-  const fetchAsset = (asset) => fetch(asset.browser_download_url, {
-    headers: { "User-Agent": "stagewand-site" }, redirect: "follow",
-    cf: { cacheEverything: true, cacheTtl: 3600 },
-  });
+  const fetchAsset = async (asset) => {
+    try {
+      return await fetch(asset.browser_download_url, {
+        headers: { "User-Agent": "stagewand-site" }, redirect: "follow",
+        cf: { cacheEverything: true, cacheTtl: 3600 },
+      });
+    } catch (_) { return null; }
+  };
   let upstream = await fetchAsset(asset);
-  // A guessed filename may be absent from the latest release. Keep the stale
+  // A guessed download may be missing or fail to fetch. Keep the stale
   // fallback until the guessed download succeeds.
-  if ((!upstream.ok || !upstream.body) && stale) {
+  if ((!upstream?.ok || !upstream.body) && stale) {
     let oldAsset;
     try { const old = await stale(); if (old) oldAsset = pickAsset(old, p); } catch (_) {}
     if (oldAsset) {
-      if (upstream.body) await upstream.body.cancel();
+      if (upstream?.body) await upstream.body.cancel();
       asset = oldAsset;
       upstream = await fetchAsset(asset);
     }
   }
-  if (!upstream.ok || !upstream.body) {
+  if (!upstream?.ok || !upstream.body) {
     return new Response("Download temporarily unavailable.", { status: 502 });
   }
   const h = new Headers({
