@@ -2,6 +2,7 @@ package systems.edmundlim.stagewand
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -51,6 +52,19 @@ class Link(
     private val outgoing = CommandQueue()
     private val generation = AtomicInteger(0)
     private var sending = false
+    private var backlogSince: Long? = null
+    private val backlogCheck = object : Runnable {
+        override fun run() {
+            val ws = socket ?: return
+            if (!checkBacklog(ws)) return
+            if (backlogSince != null) main.postDelayed(this, 25)
+        }
+    }
+
+    private companion object {
+        const val MAX_BACKLOG_BYTES = 4 * 1024L
+        const val MAX_BACKLOG_AGE_MS = 250L
+    }
 
     init {
         discovery.onResults = {
@@ -280,11 +294,7 @@ class Link(
 
     private fun enqueue(command: Command) {
         if (!outgoing.append(command)) {
-            resetConnection()
-            state = State.Disconnected
-            failureMessage = "Connection is too slow to keep up. Reconnecting…"
-            notifyChanged()
-            scheduleReconnect()
+            slowConnection()
             return
         }
         flush()
@@ -296,8 +306,16 @@ class Link(
         while (!outgoing.isEmpty) {
             val command = outgoing.popFirst() ?: break
             val id = generation.get()
-            val sent = if (socket != null) {
-                socket?.send(command.encode()) == true
+            val ws = socket
+            val sent = if (ws != null) {
+                val payload = command.encode()
+                if (!checkBacklog(ws, payload.toByteArray(StandardCharsets.UTF_8).size)) return
+                if (backlogSince == null) {
+                    backlogSince = SystemClock.elapsedRealtime()
+                    main.removeCallbacks(backlogCheck)
+                    main.postDelayed(backlogCheck, 25)
+                }
+                ws.send(payload)
             } else {
                 bluetooth.send(command)
             }
@@ -308,6 +326,28 @@ class Link(
             }
         }
         sending = false
+    }
+
+    // queueSize includes OkHttp's in-flight write. Only an observed empty queue
+    // resets the deadline; partial progress must not extend stale controls' lifetime.
+    private fun checkBacklog(ws: WebSocket, nextBytes: Int = 0): Boolean {
+        val queued = ws.queueSize()
+        if (queued == 0L) backlogSince = null
+        val since = backlogSince
+        if (queued + nextBytes > MAX_BACKLOG_BYTES ||
+            (since != null && SystemClock.elapsedRealtime() - since >= MAX_BACKLOG_AGE_MS)) {
+            slowConnection()
+            return false
+        }
+        return true
+    }
+
+    private fun slowConnection() {
+        resetConnection()
+        state = State.Disconnected
+        failureMessage = "Connection is too slow to keep up. Reconnecting…"
+        notifyChanged()
+        scheduleReconnect()
     }
 
     private fun disconnected() {
@@ -351,6 +391,7 @@ class Link(
         bluetooth.cancel()
         sending = false
         outgoing.removeAll()
+        backlogSince = null
     }
 
     private fun decodeBluetoothReply(bytes: ByteArray): Reply? = try {
