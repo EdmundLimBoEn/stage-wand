@@ -102,18 +102,32 @@ export async function onRequest(ctx) {
   const fallback = new URL(`/?unavailable=${encodeURIComponent(name)}#setup`, ctx.request.url);
   if (!p) return Response.redirect(fallback, 302);
   let asset;
+  let stale;
   try { asset = pickAsset(await releases(ctx), p); } catch (e) {
     // API failed: derive the URL from the latest tag, then the stale cache.
     try { asset = fallbackAsset(await latestTag(), name); } catch (_) { asset = null; }
     if (!asset && e.stale) { try { const old = await e.stale(); if (old) asset = pickAsset(old, p); } catch (_) {} }
+    else if (asset) stale = e.stale;
     if (!asset) return new Response("Download temporarily unavailable. Please try again shortly.", { status: 503, headers: { "Retry-After": "60" } });
   }
   if (!asset) return Response.redirect(fallback, 302);
 
-  const upstream = await fetch(asset.browser_download_url, {
+  const fetchAsset = (asset) => fetch(asset.browser_download_url, {
     headers: { "User-Agent": "stagewand-site" }, redirect: "follow",
     cf: { cacheEverything: true, cacheTtl: 3600 },
   });
+  let upstream = await fetchAsset(asset);
+  // A guessed filename may be absent from the latest release. Keep the stale
+  // fallback until the guessed download succeeds.
+  if ((!upstream.ok || !upstream.body) && stale) {
+    let oldAsset;
+    try { const old = await stale(); if (old) oldAsset = pickAsset(old, p); } catch (_) {}
+    if (oldAsset) {
+      if (upstream.body) await upstream.body.cancel();
+      asset = oldAsset;
+      upstream = await fetchAsset(asset);
+    }
+  }
   if (!upstream.ok || !upstream.body) {
     return new Response("Download temporarily unavailable.", { status: 502 });
   }
