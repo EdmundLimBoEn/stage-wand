@@ -22,6 +22,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.os.SystemClock
 import systems.edmundlim.stagewand.protocol.BluetoothProtocol
 import systems.edmundlim.stagewand.protocol.Command
 import systems.edmundlim.stagewand.protocol.CommandWriter
@@ -59,7 +60,8 @@ class BluetoothClient(context: Context) {
     private var payloadCapacity = 20
     private var writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
     private var writePending = false
-    private var writeDeadlineArmed = false
+    // A conservative age bound for the whole backlog, including the in-flight write.
+    private var backlogCreated: Long? = null
     private val outbound = CommandWriter { value ->
         val connection = gatt
         val characteristic = command
@@ -77,7 +79,6 @@ class BluetoothClient(context: Context) {
     }
     private val retryWrite = Runnable { flush() }
     private val writeDeadline = Runnable {
-        writeDeadlineArmed = false
         if (wanted && outbound.count > 0) fail(Failure.TimedOut)
     }
     private val setupDeadline = Runnable {
@@ -120,6 +121,11 @@ class BluetoothClient(context: Context) {
             fail(Failure.Incompatible)
             return false
         }
+        if (expireBacklog()) return false
+        if (backlogCreated == null) {
+            backlogCreated = SystemClock.elapsedRealtime()
+            main.postDelayed(writeDeadline, 2_000)
+        }
         if (!outbound.enqueue(command)) {
             fail(Failure.TimedOut)
             return false
@@ -134,7 +140,7 @@ class BluetoothClient(context: Context) {
         phase = Phase.Idle
         outbound.clear()
         writePending = false
-        writeDeadlineArmed = false
+        backlogCreated = null
         main.removeCallbacksAndMessages(null)
         stopScan()
         command = null
@@ -304,8 +310,7 @@ class BluetoothClient(context: Context) {
                 if (gatt != this@BluetoothClient.gatt || phase != Phase.Ready ||
                     characteristic.uuid != commandUUID || !writePending) return@post
                 writePending = false
-                main.removeCallbacks(writeDeadline)
-                writeDeadlineArmed = false
+                if (expireBacklog()) return@post
                 if (status != BluetoothGatt.GATT_SUCCESS) {
                     fail()
                     return@post
@@ -326,14 +331,22 @@ class BluetoothClient(context: Context) {
         }
     }
 
+    private fun expireBacklog(): Boolean {
+        val created = backlogCreated ?: return false
+        if (SystemClock.elapsedRealtime() - created < 2_000) return false
+        fail(Failure.TimedOut)
+        return true
+    }
+
     private fun flush() {
         if (phase != Phase.Ready) return
         main.removeCallbacks(retryWrite)
+        if (expireBacklog()) return
         outbound.flush()
         if (phase != Phase.Ready) return
-        if (outbound.count > 0 && !writeDeadlineArmed) {
-            writeDeadlineArmed = true
-            main.postDelayed(writeDeadline, 5_000)
+        if (outbound.count == 0) {
+            main.removeCallbacks(writeDeadline)
+            backlogCreated = null
         }
         if (outbound.needsRetry) main.postDelayed(retryWrite, 20)
     }
