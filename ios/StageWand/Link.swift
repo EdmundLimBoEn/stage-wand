@@ -17,11 +17,11 @@ final class Link: ObservableObject {
         case nearby(LocalSocket)
         case bluetooth(BluetoothClient)
 
-        func send(_ data: Data) async throws {
+        func send(_ data: Data, deadline: ContinuousClock.Instant?) async throws {
             switch self {
             case .remote(let socket): try await socket.send(.string(String(decoding: data, as: UTF8.self)))
             case .nearby(let socket): try await socket.send(data)
-            case .bluetooth(let client): try await client.send(data)
+            case .bluetooth(let client): try await client.send(data, deadline: deadline)
             }
         }
 
@@ -59,6 +59,8 @@ final class Link: ObservableObject {
     private var transport = "bluetooth"
     private var buffered: [(command: Command, created: ContinuousClock.Instant)] = []
     private var outgoing = CommandQueue()
+    // Keep one conservative deadline until the entire Bluetooth backlog drains.
+    private var bluetoothDeadline: ContinuousClock.Instant?
     private var settingsLoaded = false
     private var retryAttempts = 0
 
@@ -205,7 +207,7 @@ final class Link: ObservableObject {
                         let pending = self.buffered
                         self.buffered.removeAll()
                         for item in pending where item.created.duration(to: .now) < .seconds(2) {
-                            self.enqueue(item.command)
+                            self.enqueue(item.command, created: item.created)
                         }
                     case .bye(let reason):
                         self.resetConnection()
@@ -223,7 +225,11 @@ final class Link: ObservableObject {
         }
     }
 
-    private func enqueue(_ command: Command) {
+    private func enqueue(_ command: Command, created: ContinuousClock.Instant = .now) {
+        if case .bluetooth = socket, state == .authed {
+            let deadline = created.advanced(by: .seconds(2))
+            bluetoothDeadline = min(bluetoothDeadline ?? deadline, deadline)
+        }
         guard outgoing.append(command) else {
             fail("The connection is too slow to keep up. Tap to reconnect.")
             return
@@ -235,10 +241,11 @@ final class Link: ObservableObject {
                 while let self, self.generation == id, !self.outgoing.isEmpty {
                     guard let command = self.outgoing.popFirst() else { break }
                     let data = try JSONEncoder().encode(command)
-                    try await socket.send(data)
+                    try await socket.send(data, deadline: self.bluetoothDeadline)
                 }
                 guard let self, self.generation == id else { return }
                 self.sendTask = nil
+                self.bluetoothDeadline = nil
             } catch {
                 guard let self, self.generation == id else { return }
                 self.handle(error)
@@ -299,5 +306,6 @@ final class Link: ObservableObject {
         socket = nil
         sendTask = nil
         outgoing.removeAll()
+        bluetoothDeadline = nil
     }
 }
