@@ -24,12 +24,16 @@ def builds(limit=10):
     query = urllib.parse.urlencode({"filter[app]": APP, "sort": "-uploadedDate", "limit": limit,
                                     "include": "preReleaseVersion,buildBetaDetail,betaAppReviewSubmission"})
     response = call("GET", "/v1/builds?" + query)
+    membership = {}
+    for group in call("GET", f"/v1/apps/{APP}/betaGroups?limit=200")["data"]:
+        for member in call("GET", f"/v1/betaGroups/{group['id']}/builds?limit=200&fields[builds]=version")["data"]:
+            membership.setdefault(member["id"], []).append(group["attributes"]["name"])
     included = {(i["type"], i["id"]): i["attributes"] for i in response.get("included", [])}
     rows = []
     for build in response["data"]:
         rel = {k: (v.get("data") or {}) for k, v in build["relationships"].items()}
         get = lambda kind, key: included.get((kind, rel.get(key, {}).get("id")), {})
-        groups = [g["attributes"]["name"] for g in call("GET", f"/v1/builds/{build['id']}/betaGroups")["data"]]
+        groups = membership.get(build["id"], [])
         rows.append({"id": build["id"], "marketing": get("preReleaseVersions", "preReleaseVersion").get("version"),
                      **build["attributes"], "version_number": build["attributes"]["version"], "groups": groups,
                      "external": get("buildBetaDetails", "buildBetaDetail").get("externalBuildState"),
@@ -79,8 +83,8 @@ def ensure(version, number, group_name):
     if not groups:
         sys.exit(f"::error::Beta group {group_name!r} not found.")
     group_id = groups[0]["id"]
-    current = [g["id"] for g in call("GET", f"/v1/builds/{build['id']}/betaGroups")["data"]]
-    if group_id not in current:
+    current = [g["id"] for g in call("GET", f"/v1/betaGroups/{group_id}/builds?limit=200&fields[builds]=version")["data"]]
+    if build["id"] not in current:
         call("POST", f"/v1/betaGroups/{group_id}/relationships/builds", {"data": [{"type": "builds", "id": build["id"]}]})
         print(f"Added build to {group_name}")
     submission = call("GET", f"/v1/builds/{build['id']}/betaAppReviewSubmission").get("data")
