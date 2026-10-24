@@ -38,9 +38,17 @@ final class BluetoothClient: NSObject {
         updateState()
     }
 
-    func send(_ data: Data) async throws {
+    func send(_ data: Data, deadline: ContinuousClock.Instant? = nil) async throws {
         try Task.checkCancellation()
         let id = generation
+        // The caller's deadline includes time already spent in the command queue.
+        let timeout = Task { @MainActor [weak self] in
+            guard let deadline else { return }
+            do { try await ContinuousClock().sleep(until: deadline) } catch { return }
+            guard let self, self.generation == id else { return }
+            self.drop(BluetoothError.disconnected)
+        }
+        defer { timeout.cancel() }
         try await waitReady()
         guard wanted, generation == id, let peripheral, let characteristic = commandCharacteristic else {
             throw terminalError
@@ -70,6 +78,10 @@ final class BluetoothClient: NSObject {
             guard wanted, generation == id, self.peripheral === peripheral, ready else { throw terminalError }
         }
         try Task.checkCancellation()
+        if let deadline, ContinuousClock.now >= deadline {
+            drop(BluetoothError.disconnected)
+            throw BluetoothError.disconnected
+        }
         peripheral.writeValue(data, for: characteristic, type: .withoutResponse)
     }
 

@@ -2,6 +2,7 @@ package systems.edmundlim.stagewand
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -44,12 +45,26 @@ class Link(
     private var socket: WebSocket? = null
     private var closed = false
     private var started = false
+    private var reconnectSuppressed = false
     private var reconnectAttempt = 0
     private var live = false
     private var settings = Settings()
     private val outgoing = CommandQueue()
     private val generation = AtomicInteger(0)
     private var sending = false
+    private var backlogSince: Long? = null
+    private val backlogCheck = object : Runnable {
+        override fun run() {
+            val ws = socket ?: return
+            if (!checkBacklog(ws)) return
+            if (backlogSince != null) main.postDelayed(this, 25)
+        }
+    }
+
+    private companion object {
+        const val MAX_BACKLOG_BYTES = 4 * 1024L
+        const val MAX_BACKLOG_AGE_MS = 250L
+    }
 
     init {
         discovery.onResults = {
@@ -72,6 +87,7 @@ class Link(
             settings.transport != this.settings.transport
         this.settings = settings
         if (!reconnect) return
+        reconnectSuppressed = false
         resetConnection()
         reconnectAttempt = 0
         failureMessage = null
@@ -90,6 +106,7 @@ class Link(
 
     fun start() {
         if (closed) return
+        reconnectSuppressed = false
         started = true
         if (!hasPairingCode()) {
             failureMessage = null
@@ -111,7 +128,7 @@ class Link(
     }
 
     private fun connect() {
-        if (closed || !started || live) return
+        if (closed || !started || live || reconnectSuppressed) return
         if (!hasPairingCode()) {
             failureMessage = null
             state = State.EnterCode
@@ -265,7 +282,8 @@ class Link(
             }
             is Reply.Bye -> {
                 resetConnection()
-                state = if (reply.reason == "badauth") State.EnterCode else State.Disconnected
+                reconnectSuppressed = reply.reason == "displaced"
+                state = if (reply.reason == "badauth" || reply.reason == "kicked") State.EnterCode else State.Disconnected
                 failureMessage = if (reply.reason == "badauth") "Pairing code rejected. Enter the current code shown on the host. After repeated attempts, wait 30 seconds or choose Disconnect & new code on the host." else null
                 notifyChanged()
                 if (state == State.Disconnected) scheduleReconnect()
@@ -276,11 +294,7 @@ class Link(
 
     private fun enqueue(command: Command) {
         if (!outgoing.append(command)) {
-            resetConnection()
-            state = State.Disconnected
-            failureMessage = "Connection is too slow to keep up. Reconnecting…"
-            notifyChanged()
-            scheduleReconnect()
+            slowConnection()
             return
         }
         flush()
@@ -292,8 +306,16 @@ class Link(
         while (!outgoing.isEmpty) {
             val command = outgoing.popFirst() ?: break
             val id = generation.get()
-            val sent = if (socket != null) {
-                socket?.send(command.encode()) == true
+            val ws = socket
+            val sent = if (ws != null) {
+                val payload = command.encode()
+                if (!checkBacklog(ws, payload.toByteArray(StandardCharsets.UTF_8).size)) return
+                if (backlogSince == null) {
+                    backlogSince = SystemClock.elapsedRealtime()
+                    main.removeCallbacks(backlogCheck)
+                    main.postDelayed(backlogCheck, 25)
+                }
+                ws.send(payload)
             } else {
                 bluetooth.send(command)
             }
@@ -306,6 +328,28 @@ class Link(
         sending = false
     }
 
+    // queueSize includes OkHttp's in-flight write. Only an observed empty queue
+    // resets the deadline; partial progress must not extend stale controls' lifetime.
+    private fun checkBacklog(ws: WebSocket, nextBytes: Int = 0): Boolean {
+        val queued = ws.queueSize()
+        if (queued == 0L) backlogSince = null
+        val since = backlogSince
+        if (queued + nextBytes > MAX_BACKLOG_BYTES ||
+            (since != null && SystemClock.elapsedRealtime() - since >= MAX_BACKLOG_AGE_MS)) {
+            slowConnection()
+            return false
+        }
+        return true
+    }
+
+    private fun slowConnection() {
+        resetConnection()
+        state = State.Disconnected
+        failureMessage = "Connection is too slow to keep up. Reconnecting…"
+        notifyChanged()
+        scheduleReconnect()
+    }
+
     private fun disconnected() {
         resetConnection()
         state = State.Disconnected
@@ -315,7 +359,7 @@ class Link(
     }
 
     private fun scheduleReconnect() {
-        if (closed) return
+        if (closed || reconnectSuppressed) return
         val id = generation.get()
         val delay = (1_000L shl reconnectAttempt.coerceAtMost(5)).coerceAtMost(30_000L)
         reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(5)
@@ -347,6 +391,7 @@ class Link(
         bluetooth.cancel()
         sending = false
         outgoing.removeAll()
+        backlogSince = null
     }
 
     private fun decodeBluetoothReply(bytes: ByteArray): Reply? = try {

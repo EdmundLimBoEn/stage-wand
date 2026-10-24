@@ -128,7 +128,12 @@ try {
     await until(() => incompleteClients.every((socket) => socket.destroyed), "pre-auth sockets drained");
     console.log("PASS: incomplete handshakes capped at 64; closed sockets release capacity");
 
-    const live = Array.from({ length: 32 }, () => raw(`/${secret}`));
+    const live = Array.from({ length: 32 }, () => {
+        const socket = raw(`/${secret}`);
+        // Drain handshake bytes so a remote FIN can be observed by node:net.
+        socket.resume();
+        return socket;
+    });
     await until(() => upgrades === 33, "32 simultaneous upgrades");
     const excess = raw(`/${secret}`);
     let excessReply = "";

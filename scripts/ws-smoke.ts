@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { connect as tcpConnect } from "node:net";
+import { connect as tlsConnect } from "node:tls";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,7 +9,8 @@ import { join } from "node:path";
 const args = process.argv.slice(2);
 const spawnHost = args.includes("--spawn-host");
 const spawnServer = args.includes("--spawn") || spawnHost;
-const explicitURL = args.find((arg) => arg.startsWith("ws://"));
+const explicitURL = args.find((arg) => /^wss?:\/\//.test(arg));
+const targetURL = explicitURL ?? process.env.STAGEWAND_SMOKE_URL;
 const sockets: WebSocket[] = [];
 let child: ReturnType<typeof Bun.spawn> | undefined;
 let output = "";
@@ -27,14 +29,20 @@ function connect(url: string) {
     sockets.push(ws);
     const messages: any[] = [];
     let closedAt = 0;
-    const createdAt = performance.now();
+    let createdAt = performance.now();
     ws.addEventListener("message", (event) => messages.push(JSON.parse(String(event.data))));
     ws.addEventListener("close", () => { closedAt = performance.now(); });
     const opened = new Promise<void>((resolve, reject) => {
-        ws.addEventListener("open", () => resolve(), { once: true });
-        ws.addEventListener("error", () => reject(new Error(`Cannot connect: ${url}`)), { once: true });
+        const timer = setTimeout(() => {
+            reject(new Error("Timed out: WebSocket connection"));
+            ws.close();
+        }, 10_000);
+        ws.addEventListener("open", () => clearTimeout(timer), { once: true });
+        ws.addEventListener("error", () => clearTimeout(timer), { once: true });
+        ws.addEventListener("open", () => { createdAt = performance.now(); resolve(); }, { once: true });
+        ws.addEventListener("error", () => reject(new Error("Cannot connect to WebSocket endpoint")), { once: true });
     });
-    return { ws, messages, opened, get closedAt() { return closedAt; }, createdAt };
+    return { ws, messages, opened, get closedAt() { return closedAt; }, get createdAt() { return createdAt; } };
 }
 async function authenticated(url: string) {
     const peer = connect(url);
@@ -46,7 +54,9 @@ async function authenticated(url: string) {
 
 async function withoutPong(url: string) {
     const endpoint = new URL(url);
-    const socket = tcpConnect(Number(endpoint.port), endpoint.hostname);
+    const secure = endpoint.protocol === "wss:";
+    const options = { host: endpoint.hostname, port: Number(endpoint.port || (secure ? 443 : 80)) };
+    const socket = secure ? tlsConnect({ ...options, servername: endpoint.hostname }) : tcpConnect(options);
     let pending = Buffer.alloc(0);
     let upgraded = false;
     let authedAt = 0;
@@ -54,8 +64,8 @@ async function withoutPong(url: string) {
     let pings = 0;
     socket.on("error", () => {});
     socket.on("close", () => { closedAt = performance.now(); });
-    socket.on("connect", () => socket.write(
-        `GET / HTTP/1.1\r\nHost: ${endpoint.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+    socket.on(secure ? "secureConnect" : "connect", () => socket.write(
+        `GET ${endpoint.pathname}${endpoint.search} HTTP/1.1\r\nHost: ${endpoint.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
     ));
     socket.on("data", (chunk) => {
         pending = Buffer.concat([pending, chunk]);
@@ -100,7 +110,7 @@ async function spawnGoHost(hostDir: string) {
 }
 
 try {
-    let url = explicitURL ?? "ws://127.0.0.1:8787";
+    let url = targetURL ?? "ws://127.0.0.1:8787";
     if (spawnServer) {
         const repoRoot = new URL("..", import.meta.url).pathname;
         child = spawnHost
@@ -131,7 +141,7 @@ try {
         await until(() => /PORT (\d+)/.test(output), "server startup", 120_000);
         url = `ws://127.0.0.1:${output.match(/PORT (\d+)/)![1]}`;
     }
-    console.log(`Testing ${url}`);
+    console.log(`Testing ${new URL(url).origin}/[redacted]`);
     const idle = connect(url);
     await idle.opened;
     await until(() => idle.closedAt > 0, "no-auth close");
@@ -178,7 +188,7 @@ try {
     await withoutPong(url);
     console.log("PASS: WebSocket smoke checks complete");
 } catch (error) {
-    console.error("FAIL:", error);
+    console.error("FAIL:", error instanceof Error ? error.message.replace(/(?:wss?|https?):\/\/\S+/g, "[redacted URL]") : "WebSocket smoke failed");
     process.exitCode = 1;
 } finally {
     for (const ws of sockets) ws.close();

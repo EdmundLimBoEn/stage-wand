@@ -266,8 +266,131 @@ class LinkTest {
         assertEquals(Link.State.Authed, link.state)
     }
 
+    @Test
+    fun displacedWebSocketDoesNotReconnectFromTimerOrDiscovery() {
+        val listeners = mutableListOf<WebSocketListener>()
+        `when`(discovery.results).thenReturn(listOf(HostService("host", "127.0.0.1", 9000)))
+        val (listener, socket) = startWebSocket(listeners, Settings(pairingCode = "1234", transport = "wifi"))
+        listener.onMessage(socket, "{\"t\":\"status\"}")
+        drain()
+        listener.onMessage(socket, "{\"t\":\"bye\",\"reason\":\"displaced\"}")
+        drain()
+        listener.onClosed(socket, 1000, "")
+        onResults?.invoke()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(60))
+        assertEquals(Link.State.Disconnected, link.state)
+        assertEquals(1, listeners.size)
+        link.start()
+        assertEquals(2, listeners.size)
+    }
+
+    @Test
+    fun kickedRequiresCodeEntryWithoutReconnect() {
+        start()
+        attempts.single().data("{\"t\":\"bye\",\"reason\":\"kicked\"}".toByteArray())
+        drain()
+        assertEquals(Link.State.EnterCode, link.state)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(60))
+        assertEquals(1, attempts.size)
+        link.update(Settings(pairingCode = "5678"))
+        assertEquals(2, attempts.size)
+    }
+
+    @Test
+    fun webSocketTransportBudgetIncludesTheNextPayload() {
+        val (_, socket) = authenticatedWebSocket()
+        val command = Command.Key(KeyName.Right)
+        val size = command.encode().toByteArray(Charsets.UTF_8).size
+        `when`(socket.queueSize()).thenReturn(4096L - size)
+        link.send(command)
+        verify(socket).send(command.encode())
+        `when`(socket.queueSize()).thenReturn(4097L - size)
+        link.send(command)
+        verify(socket, times(1)).send(command.encode())
+        verify(socket).cancel()
+        assertEquals(Link.State.Disconnected, link.state)
+    }
+
+    @Test
+    fun acceptedSendsCannotHideAnUnboundedTransportQueue() {
+        val (_, socket) = authenticatedWebSocket()
+        var queued = 0L
+        `when`(socket.queueSize()).thenAnswer { queued }
+        `when`(socket.send(any<String>())).thenAnswer {
+            queued += it.getArgument<String>(0).toByteArray(Charsets.UTF_8).size
+            true
+        }
+        repeat(1000) { link.send(Command.Move(1.0, 1.0)) }
+        assertTrue(queued <= 4096L)
+        assertEquals(Link.State.Disconnected, link.state)
+        verify(socket).cancel()
+    }
+
+    @Test
+    fun stalledTransportExpiresWithoutFurtherInputDespitePartialProgress() {
+        val (_, socket) = authenticatedWebSocket()
+        link.send(Command.Move(1.0, 1.0))
+        `when`(socket.queueSize()).thenReturn(100L)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(125))
+        `when`(socket.queueSize()).thenReturn(50L)
+        link.send(Command.Key(KeyName.Right))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(124))
+        assertEquals(Link.State.Authed, link.state)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1))
+        verify(socket).cancel()
+        assertEquals(Link.State.Disconnected, link.state)
+        link.send(Command.Key(KeyName.Left))
+        verify(socket, never()).send(Command.Key(KeyName.Left).encode())
+    }
+
+    @Test
+    fun drainedTransportGetsAFreshDeadlineForTheNextGesture() {
+        val (_, socket) = authenticatedWebSocket()
+        link.send(Command.Move(1.0, 1.0))
+        `when`(socket.queueSize()).thenReturn(100L)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(125))
+        `when`(socket.queueSize()).thenReturn(0L)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(25))
+        link.send(Command.Key(KeyName.Right))
+        `when`(socket.queueSize()).thenReturn(20L)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(249))
+        verify(socket, never()).cancel()
+        assertEquals(Link.State.Authed, link.state)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1))
+        verify(socket).cancel()
+    }
+
+    @Test
+    fun resetDiscardsBacklogDeadlineAndNeverReplaysOldControls() {
+        val listeners = mutableListOf<WebSocketListener>()
+        val (listener, socket) = startWebSocket(listeners)
+        `when`(socket.send(any<String>())).thenReturn(true)
+        listener.onMessage(socket, "{\"t\":\"status\"}")
+        drain()
+        link.send(Command.Key(KeyName.Right))
+        `when`(socket.queueSize()).thenReturn(100L)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(125))
+        link.update(Settings(pairingCode = "5678", manualHost = "ws://localhost:9000"))
+        `when`(socket.queueSize()).thenReturn(0L)
+        listeners.last().onMessage(socket, "{\"t\":\"status\"}")
+        drain()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+        assertEquals(Link.State.Authed, link.state)
+        verify(socket, times(1)).cancel()
+        verify(socket, times(1)).send(Command.Key(KeyName.Right).encode())
+    }
+
+    private fun authenticatedWebSocket(): Pair<WebSocketListener, WebSocket> {
+        val (listener, socket) = startWebSocket()
+        `when`(socket.send(any<String>())).thenReturn(true)
+        listener.onMessage(socket, "{\"t\":\"status\"}")
+        drain()
+        return listener to socket
+    }
+
     private fun startWebSocket(
-        listeners: MutableList<WebSocketListener> = mutableListOf()
+        listeners: MutableList<WebSocketListener> = mutableListOf(),
+        settings: Settings = Settings(pairingCode = "1234", manualHost = "ws://localhost:9000")
     ): Pair<WebSocketListener, WebSocket> {
         link.close()
         val client = mock(OkHttpClient::class.java, RETURNS_DEEP_STUBS)
@@ -277,7 +400,7 @@ class LinkTest {
             socket
         }.`when`(client).newWebSocket(any(), any())
         link = Link(discovery, bluetooth, client)
-        link.update(Settings(pairingCode = "1234", manualHost = "ws://localhost:9000"))
+        link.update(settings)
         link.start()
         return listeners.single() to socket
     }

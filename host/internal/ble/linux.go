@@ -30,7 +30,7 @@ type linuxPeripheral struct {
 	session    *Session
 	bus        *dbus.Conn
 	adapter    dbus.BusObject
-	reply      *prop.Properties
+	reply      *replyProperties
 	signals    chan *dbus.Signal
 	done       chan struct{}
 	watchDone  chan struct{}
@@ -75,6 +75,8 @@ func startLinuxBus(hooks Hooks, localName string, bus *dbus.Conn) (*linuxPeriphe
 	p := &linuxPeripheral{bus: bus, done: make(chan struct{}), watchDone: make(chan struct{}), signals: make(chan *dbus.Signal, 32)}
 	hooks.OnActions = p.apply
 	p.session = NewSession(hooks)
+	// BlueZ notifications are broadcast, so require release before handover.
+	p.session.rejectHandover = true
 	if err := p.exportGATT(); err != nil {
 		return nil, err
 	}
@@ -242,7 +244,10 @@ func (p *linuxPeripheral) exportGATT() error {
 	if err != nil {
 		return err
 	}
-	p.reply = replyProps
+	p.reply = &replyProperties{Properties: replyProps}
+	if err := p.bus.Export(p.reply, replyPath, "org.freedesktop.DBus.Properties"); err != nil {
+		return err
+	}
 	command := &gattChar{role: "command", peripheral: p}
 	reply := &gattChar{role: "reply", peripheral: p}
 	if err := p.bus.Export(command, commandPath, gattIface); err != nil {
@@ -258,6 +263,54 @@ func (p *linuxPeripheral) exportAdvertisement(localName string) error {
 		return err
 	}
 	return p.bus.Export(&advertisement{peripheral: p}, advPath, "org.bluez.LEAdvertisement1")
+}
+
+// godbus reuses slice storage in SetMust and returns it from its getters.
+// Copy reply bytes under the same lock as updates so callers (including the
+// D-Bus encoder) can safely retain a snapshot after a getter returns.
+// All exported reply properties are read-only, so D-Bus Set cannot mutate them.
+type replyProperties struct {
+	*prop.Properties
+	mu sync.Mutex
+}
+
+func replySnapshot(value interface{}) interface{} {
+	if bytes, ok := value.([]byte); ok {
+		return append([]byte(nil), bytes...)
+	}
+	return value
+}
+
+func (p *replyProperties) Get(iface, property string) (dbus.Variant, *dbus.Error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	v, err := p.Properties.Get(iface, property)
+	if err != nil {
+		return v, err
+	}
+	return dbus.MakeVariant(replySnapshot(v.Value())), nil
+}
+
+func (p *replyProperties) GetAll(iface string) (map[string]dbus.Variant, *dbus.Error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	values, err := p.Properties.GetAll(iface)
+	for name, value := range values {
+		values[name] = dbus.MakeVariant(replySnapshot(value.Value()))
+	}
+	return values, err
+}
+
+func (p *replyProperties) GetMust(iface, property string) interface{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return replySnapshot(p.Properties.GetMust(iface, property))
+}
+
+func (p *replyProperties) SetMust(iface, property string, value interface{}) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Properties.SetMust(iface, property, value)
 }
 
 func (p *linuxPeripheral) apply(actions []Action) {
