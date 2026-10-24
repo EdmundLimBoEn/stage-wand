@@ -174,6 +174,49 @@ class BluetoothClientTest {
     }
 
     @Test
+    fun writeProgressDoesNotExtendBacklogLifetime() {
+        makeReady()
+        repeat(3) { assertTrue(client.send(Command.Key(KeyName.Right))) }
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1_500))
+        callback.onCharacteristicWrite(gatt, command, BluetoothGatt.GATT_SUCCESS)
+        drain()
+        verify(gatt, times(2)).writeCharacteristic(eq(command), any(ByteArray::class.java), anyInt())
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
+        assertEquals(listOf(BluetoothClient.Failure.TimedOut), failures)
+        verify(gatt).disconnect()
+        verify(gatt).close()
+        callback.onCharacteristicWrite(gatt, command, BluetoothGatt.GATT_SUCCESS)
+        drain()
+        verify(gatt, times(2)).writeCharacteristic(eq(command), any(ByteArray::class.java), anyInt())
+        assertFalse(client.send(Command.Key(KeyName.Right)))
+    }
+
+    @Test
+    fun pendingWriteExpiresWithoutACompletionCallback() {
+        makeReady()
+        assertTrue(client.send(Command.Key(KeyName.Right)))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+        assertEquals(listOf(BluetoothClient.Failure.TimedOut), failures)
+        verify(gatt).close()
+    }
+
+    @Test
+    fun drainedBacklogGetsANewDeadline() {
+        makeReady()
+        assertTrue(client.send(Command.Key(KeyName.Right)))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1_500))
+        callback.onCharacteristicWrite(gatt, command, BluetoothGatt.GATT_SUCCESS)
+        drain()
+        assertTrue(client.send(Command.Key(KeyName.Right)))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1_500))
+        assertTrue(failures.isEmpty())
+        callback.onCharacteristicWrite(gatt, command, BluetoothGatt.GATT_SUCCESS)
+        drain()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(3))
+        assertTrue(failures.isEmpty())
+    }
+
+    @Test
     fun staleScanResultsCannotConnectAfterCancelAndRestart() {
         connect()
         val old = scanCallbacks.single()

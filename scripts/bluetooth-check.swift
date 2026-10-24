@@ -248,6 +248,69 @@ struct BluetoothCheck {
         precondition(commands.values.count == 2, "Radio restart retained authenticated central")
     }
 
+    @MainActor static func deadlineChecks() async throws {
+        let client = BluetoothClient()
+        client.start()
+        let (_, peripheral, _) = ready(client)
+        let data = try JSONEncoder().encode(Command.key(.right))
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(200))
+        try await client.send(data, deadline: deadline)
+        peripheral.canSendWriteWithoutResponse = false
+        let blocked = Task { try await client.send(data, deadline: deadline) }
+        await assertFailure(blocked, "absolute backlog deadline with pending write")
+        precondition(peripheral.delegate == nil)
+        precondition(peripheral.writes == [data])
+
+        client.start()
+        let (_, next, _) = ready(client)
+        await assertFailure(Task {
+            try await client.send(data, deadline: .now.advanced(by: .seconds(-1)))
+        }, "expired queued control with available write capacity")
+        precondition(next.writes.isEmpty)
+        precondition(next.delegate == nil)
+    }
+
+    #if LINK_CHECK
+    @MainActor static func linkDeadlineChecks() async throws {
+        let defaults = UserDefaults.standard
+        defaults.set("4567", forKey: "pairingCode")
+        defaults.set("", forKey: "manualHost")
+        defaults.set("bluetooth", forKey: "transport")
+        defer {
+            defaults.removeObject(forKey: "pairingCode")
+            defaults.removeObject(forKey: "manualHost")
+            defaults.removeObject(forKey: "transport")
+        }
+        let link = Link()
+        link.start()
+        let client = CBCentralManager.latest!.delegate as! BluetoothClient
+        let (_, peripheral, reply) = ready(client)
+        await settle()
+        reply.value = try JSONEncoder().encode(Reply.status)
+        client.peripheral(peripheral, didUpdateValueFor: reply, error: nil)
+        await settle()
+        precondition(link.state == .authed)
+        let before = peripheral.writes.count
+        peripheral.canSendWriteWithoutResponse = false
+        for _ in 0..<3 { link.send(.key(.right)) }
+        await settle()
+        try await Task.sleep(for: .seconds(1))
+        peripheral.onWrite = { _ in peripheral.canSendWriteWithoutResponse = false }
+        peripheral.canSendWriteWithoutResponse = true
+        client.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
+        await settle()
+        precondition(peripheral.writes.count == before + 1)
+        try await Task.sleep(for: .milliseconds(1_200))
+        await settle()
+        precondition(link.state != .authed, "Write progress extended the queued controls' lifetime")
+        precondition(peripheral.delegate == nil, "Expired backlog retained its connection")
+        peripheral.canSendWriteWithoutResponse = true
+        client.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
+        await settle()
+        precondition(peripheral.writes.count == before + 1, "Expired controls reached the radio")
+    }
+    #endif
+
     @MainActor static func main() async throws {
         let watchdog = Task {
             try await Task.sleep(for: .seconds(20))
@@ -255,6 +318,10 @@ struct BluetoothCheck {
         }
         defer { watchdog.cancel() }
         try await clientChecks()
+        try await deadlineChecks()
+        #if LINK_CHECK
+        try await linkDeadlineChecks()
+        #endif
         try serverChecks()
         print("Bluetooth checks passed: production Apple lifecycle, cancellation, MTU, backpressure, bounded queues, stale callbacks, subscription, auth throttle, ownership, malformed writes and radio restart")
     }

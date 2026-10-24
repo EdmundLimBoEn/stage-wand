@@ -21,12 +21,13 @@ type Action struct {
 }
 
 type Session struct {
-	hooks      Hooks
-	mu         sync.Mutex
-	operations sync.Mutex
-	authed     string
-	owner      *control.Owner
-	closed     bool
+	hooks          Hooks
+	mu             sync.Mutex
+	operations     sync.Mutex
+	authed         string
+	owner          *control.Owner
+	closed         bool
+	rejectHandover bool
 }
 
 func NewSession(hooks Hooks) *Session {
@@ -69,6 +70,12 @@ func (s *Session) handle(client string, payload []byte) ([]Action, func()) {
 	}
 	s.mu.Lock()
 	if auth, ok := command.(protocol.Auth); ok {
+		// Broadcast-only transports cannot notify just the displaced owner.
+		// Check under the session locks so concurrent claims cannot bypass it.
+		if s.rejectHandover && s.authed != "" && s.authed != client {
+			s.mu.Unlock()
+			return []Action{{Drop: client}}, nil
+		}
 		owner := &control.Owner{Name: "Bluetooth"}
 		owner.Revoke = func(reason string) {
 			s.operations.Lock()

@@ -10,11 +10,46 @@ export const PLATFORMS = {
   windows: [/win(dows)?.*\.(msi|exe|zip)$/i, /\.(msi|exe)$/i],
   appimage: [/\.appimage$/i],
   linux:   [/linux.*\.appimage$/i, /\.appimage$/i, /linux.*\.tar\.gz$/i, /_amd64\.deb$/i],
-  deb:     [/_amd64\.deb$/i],
+  deb:     [/_amd64\.deb$/i, /-linux-amd64\.deb$/i],
   arch:    [/\.pkg\.tar\.zst$/i],
   android: [/\.apk$/i],
 };
 const TTL = 300;
+
+// Fallback when the API is down or rate-limited: the documented v<VERSION>
+// asset names (see release.yml / docs/releasing.md), keyed by platform.
+// "" means StageWand-<ver>.<ext> with no dash suffix (the DMG).
+export const NAMES = {
+  mac:      ".dmg",
+  windows:  "-windows-x64.zip",
+  appimage: "-linux-x86_64.AppImage",
+  linux:    "-linux-x86_64.AppImage",
+  deb:      "-linux-amd64.deb",
+  arch:     "-linux-x86_64.pkg.tar.zst",
+  android:  "-android.apk",
+};
+
+export function fallbackAsset(tag, platform) {
+  const m = /^v(\d+\.\d+\.\d+)$/.exec(tag || "");
+  if (!m || !Object.hasOwn(NAMES, platform)) return null;
+  const sfx = NAMES[platform];
+  const name = `StageWand-${m[1]}${sfx}`;
+  return { name, browser_download_url: `https://github.com/${REPO}/releases/download/${tag}/${name}` };
+}
+
+export function tagFromLocation(loc) {
+  const m = /\/releases\/tag\/(v\d+\.\d+\.\d+)\/?$/.exec(loc || "");
+  return m ? m[1] : null;
+}
+
+// github.com/<repo>/releases/latest redirects to /releases/tag/<tag>; this
+// path is not subject to the API rate limit.
+async function latestTag() {
+  const r = await fetch(`https://github.com/${REPO}/releases/latest`, {
+    method: "HEAD", redirect: "manual", headers: { "User-Agent": "stagewand-site" },
+  });
+  return tagFromLocation(r.headers.get("Location"));
+}
 
 // Unauthenticated GitHub API calls are limited per egress IP, and Cloudflare
 // egress IPs are shared, so: fresh copy for 5 min, a stale copy for 7 days to
@@ -33,9 +68,9 @@ async function releases(ctx) {
     r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=50`, { headers });
   } catch (e) { r = null; }
   if (!r || !r.ok) {
-    const old = await cache.match(stale);
-    if (old) return old.json();
-    throw new Error(`GitHub API ${r ? r.status : "unreachable"}`);
+    const e = new Error(`GitHub API ${r ? r.status : "unreachable"}`);
+    e.stale = () => cache.match(stale).then((old) => (old ? old.json() : null));
+    throw e;
   }
   const body = await r.text();
   const put = (key, ttl) => cache.put(key, new Response(body, {
@@ -67,16 +102,37 @@ export async function onRequest(ctx) {
   const fallback = new URL(`/?unavailable=${encodeURIComponent(name)}#setup`, ctx.request.url);
   if (!p) return Response.redirect(fallback, 302);
   let asset;
+  let stale;
   try { asset = pickAsset(await releases(ctx), p); } catch (e) {
-    return new Response("Download temporarily unavailable. Please try again shortly.", { status: 503, headers: { "Retry-After": "60" } });
+    // API failed: derive the URL from the latest tag, then the stale cache.
+    try { asset = fallbackAsset(await latestTag(), name); } catch (_) { asset = null; }
+    if (!asset && e.stale) { try { const old = await e.stale(); if (old) asset = pickAsset(old, p); } catch (_) {} }
+    else if (asset) stale = e.stale;
+    if (!asset) return new Response("Download temporarily unavailable. Please try again shortly.", { status: 503, headers: { "Retry-After": "60" } });
   }
   if (!asset) return Response.redirect(fallback, 302);
 
-  const upstream = await fetch(asset.browser_download_url, {
-    headers: { "User-Agent": "stagewand-site" }, redirect: "follow",
-    cf: { cacheEverything: true, cacheTtl: 3600 },
-  });
-  if (!upstream.ok || !upstream.body) {
+  const fetchAsset = async (asset) => {
+    try {
+      return await fetch(asset.browser_download_url, {
+        headers: { "User-Agent": "stagewand-site" }, redirect: "follow",
+        cf: { cacheEverything: true, cacheTtl: 3600 },
+      });
+    } catch (_) { return null; }
+  };
+  let upstream = await fetchAsset(asset);
+  // A guessed download may be missing or fail to fetch. Keep the stale
+  // fallback until the guessed download succeeds.
+  if ((!upstream?.ok || !upstream.body) && stale) {
+    let oldAsset;
+    try { const old = await stale(); if (old) oldAsset = pickAsset(old, p); } catch (_) {}
+    if (oldAsset) {
+      if (upstream?.body) await upstream.body.cancel();
+      asset = oldAsset;
+      upstream = await fetchAsset(asset);
+    }
+  }
+  if (!upstream?.ok || !upstream.body) {
     return new Response("Download temporarily unavailable.", { status: 502 });
   }
   const h = new Headers({

@@ -1,0 +1,38 @@
+name: Tunnel smoke
+
+# Public Cloudflare Quick Tunnel end-to-end check. Network-dependent, so it is
+# not a required PR check: run it manually, on a weekly schedule, or when the
+# tunnel code changes.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+  pull_request:
+    paths:
+      - scripts/tunnel*.ts
+      - scripts/ws-smoke.ts
+      - .github/workflows/tunnel-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  tunnel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.10"
+          cache-dependency-path: host/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install cloudflared
+        run: |
+          curl -fsSL -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /usr/local/bin/cloudflared
+          cloudflared --version
+      - name: Public tunnel end-to-end smoke
+        run: bun scripts/tunnel-smoke.ts
