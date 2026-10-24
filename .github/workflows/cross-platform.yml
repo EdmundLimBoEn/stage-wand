@@ -22,6 +22,8 @@ jobs:
         with:
           bun-version: latest
       - run: bun scripts/protocol-fixtures-check.ts
+      - name: Offline tunnel gate checks
+        run: bun scripts/tunnel-gate-check.ts
       - name: Version consistency (VERSION, mac/Info.plist, ios/project.yml)
         run: bash scripts/version.sh check
 

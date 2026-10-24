@@ -379,6 +379,16 @@ This Mac uses the named tunnel **stage-wand** at **stagewand.edmundlim.systems**
 
 The tunnel URL contains a random 256-bit secret path, checked before traffic reaches the Mac WebSocket server. The four-digit pairing code remains required. Treat the QR and full URL as private; neither is committed. The local URL file is `~/.config/stage-wand/tunnel-url`. Stop the runner with Ctrl+C to remove the URL and close the tunnel. If the Mac chooses a fallback port, start the runner with `STAGEWAND_PORT=8788 bun scripts/tunnel.ts` (substitute the port shown).
 
+To smoke-test a public Quick Tunnel from Linux, install Go, Bun, `curl`, and `cloudflared` (on `PATH` or at `~/.local/bin/cloudflared`), then run:
+
+```sh
+bun scripts/tunnel-smoke.ts
+```
+
+This builds the Go host, runs its no-op `--serve` test mode with a temporary `HOME`, starts `scripts/tunnel.ts`, and waits up to two minutes for public readiness. It checks public HTTP 200 on the secret path and 404 on a wrong path with curl, then tests authentication, displacement, ping/pong, and receipt of 200 ordered commands over public WSS. It redacts the private path and stops the processes and removes temporary files on completion or interruption. It does not test OS input injection. Quick Tunnels require Internet access, including outbound TCP port 7844; this opt-in check stays out of CI. Run `bun scripts/tunnel-gate-check.ts` for the offline gate check.
+
+`scripts/ws-smoke.ts` also accepts `wss://` endpoints (with the host in test mode). Use `STAGEWAND_SMOKE_URL` to pass a private URL without putting it in command arguments; output redacts the path.
+
 ## Cursor latency
 
 Use **Settings → Bluetooth direct** for trackpad control. The phone connects as a GATT central. The host advertises service `5A3E0001-8B6C-4B1E-9F8D-2C7A1D4E6F01`, receives commands on the write-without-response characteristic, and sends `status` / `bye` as notifications. This route does not depend on Wi‑Fi, a router, or the venue network. On Apple it also avoids peer-to-peer Wi‑Fi (AWDL), which time-slices the radio and produces the stop-start cursor motion seen in Wi‑Fi nearby mode when no shared network is available. Expect roughly 30 ms update cadence on Apple radios. Linux BlueZ and Windows WinRT use the same JSON and UUIDs. The connection interval depends on those stacks.
