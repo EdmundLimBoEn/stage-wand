@@ -39,6 +39,10 @@ on:
         description: "Also submit to the external group in TESTFLIGHT_EXTERNAL_GROUP (if set)"
         type: boolean
         default: true
+      status_only:
+        description: "Only report what TestFlight serves (builds, groups, beta review); no build"
+        type: boolean
+        default: false
   # main (dev merged into main) archives and uploads. dev pushes and PRs only
   # run the configuration check: they never sign, upload or see secrets used.
   push:
@@ -50,6 +54,7 @@ on:
       - ".github/workflows/ios-testflight.yml"
       - "scripts/apple-swift-checks.sh"
       - "scripts/asc-appstore-profile.py"
+      - "scripts/asc-testflight.py"
       - "scripts/version.sh"
   pull_request:
     branches: [main, dev]
@@ -60,6 +65,7 @@ on:
       - ".github/workflows/ios-testflight.yml"
       - "scripts/apple-swift-checks.sh"
       - "scripts/asc-appstore-profile.py"
+      - "scripts/asc-testflight.py"
       - "scripts/version.sh"
 
 concurrency:
@@ -81,6 +87,7 @@ jobs:
     outputs:
       ready: ${{ steps.check.outputs.ready }}
       upload: ${{ steps.check.outputs.upload }}
+      status: ${{ steps.check.outputs.status }}
     steps:
       - id: check
         env:
@@ -91,8 +98,15 @@ jobs:
           APPSTORE_CERTIFICATES_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATES_PASSWORD }}
           ASC_APP_ID: ${{ vars.ASC_APP_ID }}
           UPLOAD: ${{ github.event_name != 'workflow_dispatch' || inputs.upload }}
+          STATUS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.status_only }}
         run: |
           set -euo pipefail
+          if [ "${STATUS_ONLY}" = "true" ]; then
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+            echo "upload=false" >> "${GITHUB_OUTPUT}"
+            echo "status=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
           required=(ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY_B64 \
             APPSTORE_CERTIFICATES_FILE_BASE64 APPSTORE_CERTIFICATES_PASSWORD)
           if [ "${UPLOAD}" = "true" ]; then required+=(ASC_APP_ID); fi
@@ -116,6 +130,27 @@ jobs:
             echo "ready=false" >> "${GITHUB_OUTPUT}"
             echo "::notice::Skipping TestFlight upload; not configured yet (missing: ${missing[*]}). See docs/testflight.md."
           fi
+
+  status:
+    name: Report TestFlight state
+    needs: gate
+    if: needs.gate.outputs.status == 'true'
+    runs-on: ubuntu-latest
+    env:
+      ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY_B64: ${{ secrets.ASC_PRIVATE_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report builds, groups and beta review
+        run: |
+          set -euo pipefail
+          key_path="${RUNNER_TEMP}/AuthKey.p8"
+          python3 -c 'import base64,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(os.environ["ASC_PRIVATE_KEY_B64"]))' "${key_path}"
+          chmod 600 "${key_path}"
+          APP_STORE_CONNECT_API_KEY_PATH="${key_path}" python3 scripts/asc-testflight.py status
+          rm -f "${key_path}"
 
   testflight:
     name: Archive and upload to TestFlight
@@ -313,9 +348,13 @@ jobs:
         if: needs.gate.outputs.upload == 'true' && env.TESTFLIGHT_EXTERNAL_GROUP != ''
         run: |
           set -euo pipefail
-          asc builds add-groups --app "${ASC_APP_ID}" \
-            --build-number "${BUILT_BUILD_NUMBER}" --version "${BUILT_VERSION}" --platform IOS \
-            --group "${TESTFLIGHT_EXTERNAL_GROUP}" --submit --confirm
+          # `asc builds upload --wait` returns once the build is discovered, not
+          # once it is VALID, so wait here before adding the group and submitting.
+          python3 scripts/asc-testflight.py ensure "${BUILT_VERSION}" "${BUILT_BUILD_NUMBER}" "${TESTFLIGHT_EXTERNAL_GROUP}"
+
+      - name: Report TestFlight state
+        if: needs.gate.outputs.upload == 'true'
+        run: python3 scripts/asc-testflight.py status
 
       - name: Summary
         if: always()
