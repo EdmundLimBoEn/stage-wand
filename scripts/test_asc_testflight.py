@@ -17,6 +17,51 @@ testflight = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(testflight)
 
 
+class StatusTests(unittest.TestCase):
+    def test_status_reuses_group_snapshot_for_membership_and_display(self):
+        groups = [
+            {'id': 'external', 'attributes': {'name': 'Testers', 'isInternalGroup': False,
+                                             'publicLinkEnabled': True, 'publicLink': 'https://example.com/test'}},
+            {'id': 'internal', 'attributes': {'name': 'Team', 'isInternalGroup': True}},
+        ]
+        build = {'id': 'build', 'relationships': {}, 'attributes': {
+            'version': '42', 'uploadedDate': '2026-10-25', 'processingState': 'VALID',
+            'expired': False, 'usesNonExemptEncryption': False}}
+        for snapshot in (groups, []):
+            with self.subTest(groups=len(snapshot)), tempfile.TemporaryDirectory() as temp:
+                def respond(method, path):
+                    self.assertEqual(method, 'GET')
+                    if path.startswith('/v1/apps/app/betaGroups'):
+                        return {'data': snapshot}
+                    if path.startswith('/v1/builds?'):
+                        return {'data': [build]}
+                    if path.startswith('/v1/betaGroups/'):
+                        return {'data': [{'id': 'build'}]}
+                    self.fail(f'Unexpected request: {path}')
+
+                summary = Path(temp) / 'summary'
+                output = io.StringIO()
+                with patch.object(testflight, 'APP', 'app'), \
+                     patch.object(testflight, 'call', side_effect=respond) as api, \
+                     patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary)}), \
+                     contextlib.redirect_stdout(output):
+                    testflight.status()
+                group_requests = [c for c in api.call_args_list if '/apps/app/betaGroups' in c.args[1]]
+                self.assertEqual(len(group_requests), 1)
+                self.assertEqual(group_requests[0].args, ('GET', '/v1/apps/app/betaGroups?limit=200'))
+                self.assertEqual(api.call_count, 2 + len(snapshot))
+                text = output.getvalue()
+                self.assertEqual(summary.read_text(), text)
+                membership = 'Testers, Team' if snapshot else ''
+                self.assertIn(f'| None | 42 | 2026-10-25 | VALID | False | False | None | None | None | {membership} |', text)
+                if snapshot:
+                    self.assertIn('| Testers | False | True | https://example.com/test |', text)
+                    self.assertIn('| Team | True | None |  |', text)
+                else:
+                    self.assertNotIn('| Testers |', text)
+                    self.assertNotIn('| Team |', text)
+
+
 class EnsureTests(unittest.TestCase):
     def run_ensure(self, state):
         submission = {'attributes': {'betaReviewState': state}} if state else None
