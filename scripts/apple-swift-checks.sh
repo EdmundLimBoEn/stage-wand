@@ -27,3 +27,9 @@ check session-security-check mac/Sources/AuthenticationLimiter.swift mac/Sources
 if [ "${SKIP_BLUETOOTH_CHECK:-0}" != "1" ]; then
   bash scripts/bluetooth-check.sh
 fi
+
+# Link uses Apple Combine/Network; replace only its transports with test doubles.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  check link-age-check Shared/Protocol.swift Shared/CommandQueue.swift Shared/ConnectionURL.swift \
+    ios/StageWand/Link.swift scripts/link-age-check.swift
+fi

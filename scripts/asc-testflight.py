@@ -89,6 +89,9 @@ def ensure(version, number, group_name):
         print(f"Added build to {group_name}")
     submission = call("GET", f"/v1/builds/{build['id']}/betaAppReviewSubmission").get("data")
     if submission:
+        if submission["attributes"]["betaReviewState"] == "REJECTED":
+            sys.exit(f"::error::Beta App Review for build {version} ({number}) is REJECTED. "
+                     "Open App Store Connect to review and resolve the rejection before retrying external distribution.")
         print(f"Beta App Review already submitted: {submission['attributes']['betaReviewState']}")
     else:
         result = call("POST", "/v1/betaAppReviewSubmissions",
