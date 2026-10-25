@@ -169,6 +169,17 @@ struct LinkAgeCheck {
             precondition(delayedProbe.cancelled && delayedProbe.commands.isEmpty,
                          "Expired command reached the transport before the watchdog ran")
 
+            // Enqueue must report rejection when it discovers expiry before the watchdog runs.
+            let (expiredLink, expiredProbe) = try await start(address)
+            precondition(expiredLink.send(.click(.left)))
+            stallMainActor()
+            precondition(!expiredLink.send(.key(.right)),
+                         "Expired backlog must not confirm a discarded command")
+            guard case .failed = expiredLink.state else { preconditionFailure("Expiry must fail the connection") }
+            precondition(expiredProbe.cancelled)
+            try await Task.sleep(for: .milliseconds(50))
+            precondition(expiredProbe.commands.isEmpty, "Rejected backlog reached the transport")
+
             // Time spent buffered before authentication consumes the same two-second budget.
             let (bufferedLink, bufferedProbe) = try await start(address, buffered: true)
             try await waitUntil { bufferedProbe.blocked != nil }

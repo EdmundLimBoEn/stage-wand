@@ -90,19 +90,18 @@ final class Link: ObservableObject {
         refreshSettings(force: true)
     }
 
-    /// Returns true when the command was queued for the computer (or buffered while reconnecting).
+    /// Returns queue acceptance (including reconnect buffering), not confirmation of execution.
     @discardableResult
     func send(_ command: Command) -> Bool {
         switch command {
         case .auth: return false
         case .move(let dx, let dy), .scroll(let dx, let dy):
             guard state == .authed, dx.isFinite, dy.isFinite else { return false }
-            if dx != 0 || dy != 0 { enqueue(command) }
-            return true
+            guard dx != 0 || dy != 0 else { return false }
+            return enqueue(command)
         case .key, .click, .chord:
             if state == .authed {
-                enqueue(command)
-                return true
+                return enqueue(command)
             } else if state == .searching || state == .disconnected || isConnecting {
                 if buffered.count == 8 { buffered.removeFirst() }
                 buffered.append((command, .now))
@@ -233,7 +232,9 @@ final class Link: ObservableObject {
         }
     }
 
-    private func enqueue(_ command: Command, created: ContinuousClock.Instant = .now) {
+    @discardableResult
+    private func enqueue(_ command: Command, created: ContinuousClock.Instant = .now) -> Bool {
+        guard let socket else { return false }
         if state == .authed {
             let deadline = created.advanced(by: .seconds(2))
             if commandDeadline == nil || deadline < commandDeadline! {
@@ -246,13 +247,13 @@ final class Link: ObservableObject {
                     _ = self.expireCommandsIfNeeded()
                 }
             }
-            if expireCommandsIfNeeded() { return }
+            if expireCommandsIfNeeded() { return false }
         }
         guard outgoing.append(command) else {
             fail("The connection is too slow to keep up. Tap to reconnect.")
-            return
+            return false
         }
-        guard sendTask == nil, let socket else { return }
+        guard sendTask == nil else { return true }
         let id = generation
         sendTask = Task { @MainActor [weak self] in
             do {
@@ -275,6 +276,7 @@ final class Link: ObservableObject {
                 self.handle(error)
             }
         }
+        return true
     }
 
     private func expireCommandsIfNeeded() -> Bool {
