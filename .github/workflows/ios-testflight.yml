@@ -55,6 +55,7 @@ on:
       - "scripts/apple-swift-checks.sh"
       - "scripts/asc-appstore-profile.py"
       - "scripts/asc-testflight.py"
+      - "scripts/test_asc_testflight.py"
       - "scripts/version.sh"
   pull_request:
     branches: [main, dev]
@@ -66,6 +67,7 @@ on:
       - "scripts/apple-swift-checks.sh"
       - "scripts/asc-appstore-profile.py"
       - "scripts/asc-testflight.py"
+      - "scripts/test_asc_testflight.py"
       - "scripts/version.sh"
 
 concurrency:
@@ -89,6 +91,9 @@ jobs:
       upload: ${{ steps.check.outputs.upload }}
       status: ${{ steps.check.outputs.status }}
     steps:
+      - uses: actions/checkout@v4
+      - name: Test TestFlight automation (offline)
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - id: check
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -245,6 +250,7 @@ jobs:
       # profile above. Automatic signing on a fresh runner would ask the API
       # for a new Apple Development certificate on every run.
       - name: Archive Release
+        id: archive
         working-directory: ios
         run: |
           set -euo pipefail
@@ -273,6 +279,7 @@ jobs:
           test -f "${app}/Assets.car" || { echo "::error::Compiled asset catalog (app icon) missing"; exit 1; }
 
       - name: Export IPA for App Store Connect
+        id: export
         run: |
           set -euo pipefail
           export_path="${RUNNER_TEMP}/ipa"
@@ -337,6 +344,7 @@ jobs:
           PY
 
       - name: Upload build to App Store Connect and wait for processing
+        id: upload
         if: needs.gate.outputs.upload == 'true'
         run: |
           set -euo pipefail
@@ -345,6 +353,7 @@ jobs:
             --wait --test-notes "${notes}" --locale en-US
 
       - name: Add to external group and submit for Beta App Review
+        id: external
         if: needs.gate.outputs.upload == 'true' && env.TESTFLIGHT_EXTERNAL_GROUP != ''
         run: |
           set -euo pipefail
@@ -358,16 +367,23 @@ jobs:
 
       - name: Summary
         if: always()
+        env:
+          WORKFLOW_RESULT: ${{ job.status }}
+          ARCHIVE_RESULT: ${{ steps.archive.outcome }}
+          EXPORT_RESULT: ${{ steps.export.outcome }}
+          UPLOAD_RESULT: ${{ steps.upload.outcome }}
+          EXTERNAL_RESULT: ${{ steps.external.outcome }}
         run: |
           {
             echo "### Stage Wand TestFlight"
             echo "- Version: ${BUILT_VERSION:-?} (${BUILT_BUILD_NUMBER:-?})"
-            if [ "${{ needs.gate.outputs.upload }}" != "true" ]; then
-              echo "- Dry run: archived and exported, not uploaded"
-            elif [ -n "${TESTFLIGHT_EXTERNAL_GROUP}" ]; then
-              echo "- External group: ${TESTFLIGHT_EXTERNAL_GROUP} (submitted for Beta App Review)"
-            else
-              echo "- Internal testers only (TESTFLIGHT_EXTERNAL_GROUP not set)"
+            echo "- Workflow result: ${WORKFLOW_RESULT}"
+            echo "- Archive: ${ARCHIVE_RESULT}"
+            echo "- Export: ${EXPORT_RESULT}"
+            echo "- Upload: ${UPLOAD_RESULT}"
+            echo "- External review: ${EXTERNAL_RESULT}"
+            if [ -n "${TESTFLIGHT_EXTERNAL_GROUP}" ]; then
+              echo "- External group: ${TESTFLIGHT_EXTERNAL_GROUP}"
             fi
           } >> "${GITHUB_STEP_SUMMARY}"
 

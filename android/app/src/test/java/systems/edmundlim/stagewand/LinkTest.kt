@@ -104,6 +104,47 @@ class LinkTest {
     }
 
     @Test
+    fun synchronousBluetoothRejectionDoesNotConfirmTheCommand() {
+        start()
+        attempts.single().data("{\"t\":\"status\"}".toByteArray())
+        drain()
+        doAnswer {
+            attempts.single().fail(BluetoothClient.Failure.Incompatible)
+            false
+        }.`when`(bluetooth).send(any())
+        assertFalse(link.send(Command.Key(KeyName.Right)))
+        assertEquals(BluetoothClient.Failure.Incompatible.message, link.failureMessage)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(60))
+        assertEquals(1, attempts.size)
+    }
+
+    @Test
+    fun webSocketRejectionDoesNotConfirmTheCommand() {
+        val (_, socket) = authenticatedWebSocket()
+        `when`(socket.send(any<String>())).thenReturn(false)
+        assertFalse(link.send(Command.Key(KeyName.Right)))
+        assertEquals(Link.State.Disconnected, link.state)
+        verify(socket).cancel()
+    }
+
+    @Test
+    fun synchronousTransportExceptionDoesNotConfirmTheCommand() {
+        val (_, socket) = authenticatedWebSocket()
+        `when`(socket.send(any<String>())).thenThrow(IllegalStateException("closed"))
+        assertFalse(link.send(Command.Key(KeyName.Right)))
+        assertEquals(Link.State.Disconnected, link.state)
+        verify(socket).cancel()
+    }
+
+    @Test
+    fun rejectedQueueAppendDoesNotConfirmOrSendTheCommand() {
+        val (_, socket) = authenticatedWebSocket()
+        assertFalse(link.send(Command.Move(25_601.0, 0.0)))
+        verify(socket, never()).send(any<String>())
+        assertEquals(Link.State.Disconnected, link.state)
+    }
+
+    @Test
     fun incompatibleBluetoothConnectionHasActionableErrorWithoutRetryLoop() {
         start()
         attempts.single().fail(BluetoothClient.Failure.Incompatible)
@@ -303,10 +344,10 @@ class LinkTest {
         val command = Command.Key(KeyName.Right)
         val size = command.encode().toByteArray(Charsets.UTF_8).size
         `when`(socket.queueSize()).thenReturn(4096L - size)
-        link.send(command)
+        assertTrue(link.send(command))
         verify(socket).send(command.encode())
         `when`(socket.queueSize()).thenReturn(4097L - size)
-        link.send(command)
+        assertFalse(link.send(command))
         verify(socket, times(1)).send(command.encode())
         verify(socket).cancel()
         assertEquals(Link.State.Disconnected, link.state)

@@ -26,7 +26,7 @@ export async function startTunnelGate(options: {
         socket.setTimeout(10_000, () => socket.destroy());
         let pending = Buffer.alloc(0);
         function reply(status: string, body = "") {
-            socket.end(`HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n${body}`);
+            socket.end(`HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n${body}`, () => socket.destroy());
         }
         function handshake(chunk: Buffer) {
             pending = Buffer.concat([pending, chunk]);
@@ -36,7 +36,6 @@ export async function startTunnelGate(options: {
                 return;
             }
             socket.removeListener("data", handshake);
-            clearTimeout(headerDeadline);
             if (end > 16_384) { socket.destroy(); return; }
             const header = pending.subarray(0, end).toString("latin1");
             const lines = header.split("\r\n");
@@ -49,6 +48,7 @@ export async function startTunnelGate(options: {
                 lines.some((line) => /^Connection:/i.test(line) && line.slice(line.indexOf(":") + 1).split(",").some((part) => part.trim().toLowerCase() === "upgrade"));
             if (!isUpgrade) { reply("200 OK", "StageWand tunnel ready\n"); return; }
             if (upgraded >= 32) { reply("503 Service Unavailable"); return; }
+            clearTimeout(headerDeadline);
             upgraded++;
             preAuth.delete(socket);
             socket.pause();

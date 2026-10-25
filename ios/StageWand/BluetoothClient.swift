@@ -42,13 +42,14 @@ final class BluetoothClient: NSObject {
         try Task.checkCancellation()
         let id = generation
         // The caller's deadline includes time already spent in the command queue.
-        let timeout = Task { @MainActor [weak self] in
-            guard let deadline else { return }
-            do { try await ContinuousClock().sleep(until: deadline) } catch { return }
-            guard let self, self.generation == id else { return }
-            self.drop(BluetoothError.disconnected)
+        let timeout = deadline.map { deadline in
+            Task { @MainActor [weak self] in
+                do { try await ContinuousClock().sleep(until: deadline) } catch { return }
+                guard let self, self.generation == id else { return }
+                self.drop(BluetoothError.disconnected)
+            }
         }
-        defer { timeout.cancel() }
+        defer { timeout?.cancel() }
         try await waitReady()
         guard wanted, generation == id, let peripheral, let characteristic = commandCharacteristic else {
             throw terminalError

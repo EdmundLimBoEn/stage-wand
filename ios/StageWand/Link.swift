@@ -59,8 +59,10 @@ final class Link: ObservableObject {
     private var transport = "bluetooth"
     private var buffered: [(command: Command, created: ContinuousClock.Instant)] = []
     private var outgoing = CommandQueue()
-    // Keep one conservative deadline until the entire Bluetooth backlog drains.
-    private var bluetoothDeadline: ContinuousClock.Instant?
+    // Keep one conservative deadline until the entire command backlog drains,
+    // including time spent waiting for a transport send to complete.
+    private var commandDeadline: ContinuousClock.Instant?
+    private var commandTimeoutTask: Task<Void, Never>?
     private var settingsLoaded = false
     private var retryAttempts = 0
 
@@ -88,19 +90,18 @@ final class Link: ObservableObject {
         refreshSettings(force: true)
     }
 
-    /// Returns true when the command was queued for the computer (or buffered while reconnecting).
+    /// Returns queue acceptance (including reconnect buffering), not confirmation of execution.
     @discardableResult
     func send(_ command: Command) -> Bool {
         switch command {
         case .auth: return false
         case .move(let dx, let dy), .scroll(let dx, let dy):
             guard state == .authed, dx.isFinite, dy.isFinite else { return false }
-            if dx != 0 || dy != 0 { enqueue(command) }
-            return true
+            guard dx != 0 || dy != 0 else { return false }
+            return enqueue(command)
         case .key, .click, .chord:
             if state == .authed {
-                enqueue(command)
-                return true
+                return enqueue(command)
             } else if state == .searching || state == .disconnected || isConnecting {
                 if buffered.count == 8 { buffered.removeFirst() }
                 buffered.append((command, .now))
@@ -231,32 +232,58 @@ final class Link: ObservableObject {
         }
     }
 
-    private func enqueue(_ command: Command, created: ContinuousClock.Instant = .now) {
-        if case .bluetooth = socket, state == .authed {
+    @discardableResult
+    private func enqueue(_ command: Command, created: ContinuousClock.Instant = .now) -> Bool {
+        guard let socket else { return false }
+        if state == .authed {
             let deadline = created.advanced(by: .seconds(2))
-            bluetoothDeadline = min(bluetoothDeadline ?? deadline, deadline)
+            if commandDeadline == nil || deadline < commandDeadline! {
+                commandDeadline = deadline
+                commandTimeoutTask?.cancel()
+                let id = generation
+                commandTimeoutTask = Task { @MainActor [weak self] in
+                    do { try await ContinuousClock().sleep(until: deadline) } catch { return }
+                    guard let self, self.generation == id else { return }
+                    _ = self.expireCommandsIfNeeded()
+                }
+            }
+            if expireCommandsIfNeeded() { return false }
         }
         guard outgoing.append(command) else {
             fail("The connection is too slow to keep up. Tap to reconnect.")
-            return
+            return false
         }
-        guard sendTask == nil, let socket else { return }
+        guard sendTask == nil else { return true }
         let id = generation
         sendTask = Task { @MainActor [weak self] in
             do {
                 while let self, self.generation == id, !self.outgoing.isEmpty {
+                    if self.expireCommandsIfNeeded() { return }
                     guard let command = self.outgoing.popFirst() else { break }
                     let data = try JSONEncoder().encode(command)
-                    try await socket.send(data, deadline: self.bluetoothDeadline)
+                    try await socket.send(data, deadline: self.commandDeadline)
+                    guard self.generation == id else { return }
+                    if self.expireCommandsIfNeeded() { return }
                 }
                 guard let self, self.generation == id else { return }
                 self.sendTask = nil
-                self.bluetoothDeadline = nil
+                self.commandDeadline = nil
+                self.commandTimeoutTask?.cancel()
+                self.commandTimeoutTask = nil
             } catch {
                 guard let self, self.generation == id else { return }
+                if self.expireCommandsIfNeeded() { return }
                 self.handle(error)
             }
         }
+        return true
+    }
+
+    private func expireCommandsIfNeeded() -> Bool {
+        guard let deadline = commandDeadline, ContinuousClock.now >= deadline else { return false }
+        // Reset cancels even a suspended Wi-Fi/WSS send and clears the entire queue.
+        fail("The connection is too slow to keep up. Tap to reconnect.")
+        return true
     }
 
     private func armTimeout(_ id: UUID) {
@@ -312,6 +339,8 @@ final class Link: ObservableObject {
         socket = nil
         sendTask = nil
         outgoing.removeAll()
-        bluetoothDeadline = nil
+        commandDeadline = nil
+        commandTimeoutTask?.cancel()
+        commandTimeoutTask = nil
     }
 }

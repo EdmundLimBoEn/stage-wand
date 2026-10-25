@@ -20,12 +20,14 @@ call = ascprofile.call
 APP = os.environ.get("ASC_APP_ID", "")
 
 
-def builds(limit=10):
+def builds(limit=10, *, app_groups=None):
     query = urllib.parse.urlencode({"filter[app]": APP, "sort": "-uploadedDate", "limit": limit,
                                     "include": "preReleaseVersion,buildBetaDetail,betaAppReviewSubmission"})
     response = call("GET", "/v1/builds?" + query)
+    if app_groups is None:
+        app_groups = call("GET", f"/v1/apps/{APP}/betaGroups?limit=200")["data"]
     membership = {}
-    for group in call("GET", f"/v1/apps/{APP}/betaGroups?limit=200")["data"]:
+    for group in app_groups:
         for member in call("GET", f"/v1/betaGroups/{group['id']}/builds?limit=200&fields[builds]=version")["data"]:
             membership.setdefault(member["id"], []).append(group["attributes"]["name"])
     included = {(i["type"], i["id"]): i["attributes"] for i in response.get("included", [])}
@@ -43,13 +45,14 @@ def builds(limit=10):
 
 
 def status():
+    app_groups = call("GET", f"/v1/apps/{APP}/betaGroups?limit=200")["data"]
     lines = ["### TestFlight state", "", "| Version | Build | Uploaded | Processing | Expired | Encryption | Internal | External | Beta review | Groups |",
              "|---|---|---|---|---|---|---|---|---|---|"]
-    for r in builds():
+    for r in builds(app_groups=app_groups):
         lines.append(f"| {r['marketing']} | {r['version_number']} | {r['uploadedDate']} | {r['processingState']} | {r['expired']} | "
                      f"{r['usesNonExemptEncryption']} | {r['internal']} | {r['external']} | {r['review']} | {', '.join(r['groups'])} |")
     lines += ["", "| Group | Internal | Public link | Link |", "|---|---|---|---|"]
-    for g in call("GET", f"/v1/apps/{APP}/betaGroups")["data"]:
+    for g in app_groups:
         a = g["attributes"]
         lines.append(f"| {a['name']} | {a['isInternalGroup']} | {a.get('publicLinkEnabled')} | {a.get('publicLink') or ''} |")
     text = "\n".join(lines)
@@ -89,6 +92,9 @@ def ensure(version, number, group_name):
         print(f"Added build to {group_name}")
     submission = call("GET", f"/v1/builds/{build['id']}/betaAppReviewSubmission").get("data")
     if submission:
+        if submission["attributes"]["betaReviewState"] == "REJECTED":
+            sys.exit(f"::error::Beta App Review for build {version} ({number}) is REJECTED. "
+                     "Open App Store Connect to review and resolve the rejection before retrying external distribution.")
         print(f"Beta App Review already submitted: {submission['attributes']['betaReviewState']}")
     else:
         result = call("POST", "/v1/betaAppReviewSubmissions",
