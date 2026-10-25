@@ -10,7 +10,7 @@ DISTRIBUTION_CERT_PEM (path to the imported certificate in PEM form).
 Usage: asc-appstore-profile.py BUNDLE_ID
 Writes PROFILE_NAME and PROFILE_UUID to $GITHUB_ENV when set. Stdlib + openssl only.
 """
-import base64, json, os, pathlib, plistlib, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
+import base64, contextlib, json, os, pathlib, plistlib, signal, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 
 API = "https://api.appstoreconnect.apple.com"
 
@@ -48,6 +48,27 @@ def token():
     return (signing_input + b"." + b64url(der_to_raw(der))).decode()
 
 
+@contextlib.contextmanager
+def response_deadline(timeout):
+    # These CLI helpers run on the main thread of Unix CI runners. Socket
+    # timeouts alone cannot stop a response that keeps trickling bytes.
+    def expired(signum, frame):
+        raise TimeoutError("App Store Connect response deadline expired")
+
+    previous_handler = signal.signal(signal.SIGALRM, expired)
+    started = time.monotonic()
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, timeout)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        delay, interval = previous_timer
+        if delay:
+            delay = max(0.000001, delay - (time.monotonic() - started))
+        signal.setitimer(signal.ITIMER_REAL, delay, interval)
+
+
 def call(method, path, body=None, *, deadline=None):
     # Retry reads only: a timed-out write may already have been applied by Apple.
     attempts = 3 if method == "GET" else 1
@@ -61,8 +82,9 @@ def call(method, path, body=None, *, deadline=None):
         if timeout <= 0:
             raise TimeoutError("App Store Connect polling deadline expired")
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                result = json.loads(response.read() or b"{}")
+            with response_deadline(timeout):
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    result = json.loads(response.read() or b"{}")
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError("App Store Connect polling deadline expired")
             return result
