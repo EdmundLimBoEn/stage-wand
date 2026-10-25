@@ -100,7 +100,19 @@ struct LinkDeliveryCheck {
         precondition(link.state == .authed)
         try await Task.sleep(for: .milliseconds(100))
         precondition(recorder.read().count == commands.count, "Changing credentials must discard buffered input")
+        precondition(!link.send(.move(dx: 0, dy: 0)), "Dropped no-op must not report queue acceptance")
+        precondition(!link.send(.scroll(dx: 0, dy: 0)), "Dropped no-op must not report queue acceptance")
+        // Stay on the main actor without yielding so the sender cannot drain the
+        // queue: the 65th key must be rejected synchronously, without a haptic.
+        for _ in 0..<64 {
+            precondition(link.send(.key(.right)), "Available queue capacity must be accepted")
+        }
+        precondition(!link.send(.key(.right)), "Queue overflow must not confirm a discarded command")
+        guard case .failed = link.state else { fatalError("Overflow must fail the connection") }
+        try await Task.sleep(for: .milliseconds(100))
+        precondition(recorder.read().count == commands.count, "Overflow must discard the queued commands")
+        precondition(!link.send(.key(.right)), "Failed connection must reject input")
         withExtendedLifetime(server) {}
-        print("Link delivery checks passed: native direct auth, bounded buffered keys, exact movement and ordering, displaced-client reconnect suppression, credential-change input clearing")
+        print("Link delivery checks passed: native direct auth, bounded buffered keys, exact movement and ordering, displaced-client reconnect suppression, credential-change input clearing, queue acceptance and overflow rejection")
     }
 }

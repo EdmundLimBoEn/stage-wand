@@ -117,7 +117,7 @@ class Link(
         connect()
     }
 
-    /** Returns true when the command was queued for the computer. */
+    /** Returns queue/transport acceptance, not confirmation of execution by the computer. */
     fun send(command: Command): Boolean {
         if (closed) return false
         val accepted = when (command) {
@@ -126,8 +126,7 @@ class Link(
             is Command.Scroll -> state == State.Authed && command.dx.isFinite() && command.dy.isFinite()
             is Command.Key, is Command.Click, is Command.Chord -> state == State.Authed
         }
-        if (accepted) enqueue(command)
-        return accepted
+        return accepted && enqueue(command)
     }
 
     private fun connect() {
@@ -295,40 +294,45 @@ class Link(
         }
     }
 
-    private fun enqueue(command: Command) {
+    private fun enqueue(command: Command): Boolean {
         if (!outgoing.append(command)) {
             slowConnection()
-            return
+            return false
         }
-        flush()
+        return flush()
     }
 
-    private fun flush() {
-        if (sending) return
+    private fun flush(): Boolean {
+        if (sending) return true
         sending = true
         while (!outgoing.isEmpty) {
             val command = outgoing.popFirst() ?: break
             val id = generation.get()
             val ws = socket
-            val sent = if (ws != null) {
-                val payload = command.encode()
-                if (!checkBacklog(ws, payload.toByteArray(StandardCharsets.UTF_8).size)) return
-                if (backlogSince == null) {
-                    backlogSince = SystemClock.elapsedRealtime()
-                    main.removeCallbacks(backlogCheck)
-                    main.postDelayed(backlogCheck, 25)
+            val sent = try {
+                if (ws != null) {
+                    val payload = command.encode()
+                    if (!checkBacklog(ws, payload.toByteArray(StandardCharsets.UTF_8).size)) return false
+                    if (backlogSince == null) {
+                        backlogSince = SystemClock.elapsedRealtime()
+                        main.removeCallbacks(backlogCheck)
+                        main.postDelayed(backlogCheck, 25)
+                    }
+                    ws.send(payload)
+                } else {
+                    bluetooth.send(command)
                 }
-                ws.send(payload)
-            } else {
-                bluetooth.send(command)
+            } catch (_: Exception) {
+                false
             }
-            if (!sent) {
+            if (!sent || generation.get() != id) {
                 sending = false
                 if (generation.get() == id) disconnected()
-                return
+                return false
             }
         }
         sending = false
+        return true
     }
 
     // queueSize includes OkHttp's in-flight write. Only an observed empty queue
