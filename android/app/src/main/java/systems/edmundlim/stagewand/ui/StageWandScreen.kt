@@ -142,6 +142,20 @@ private fun SettingsPane(settings: Settings, onChange: (Settings) -> Unit, onDon
             onValueChange = { onChange(settings.copy(sensitivity = it)) },
             valueRange = 0.5f..3f
         )
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text("Haptic feedback")
+                Text(
+                    "A light tap each time a volume-button click is sent.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = settings.hapticFeedback,
+                onCheckedChange = { onChange(settings.copy(hapticFeedback = it)) }
+            )
+        }
         OutlinedTextField(
             value = settings.pairingCode,
             onValueChange = { onChange(settings.copy(pairingCode = it.filter { digit -> digit in '0'..'9' }.take(4))) },

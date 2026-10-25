@@ -11,6 +11,7 @@ struct SettingsView: View {
     @AppStorage("manualHost") private var manualHost: String = ""
     @AppStorage("pointerMode") private var pointerMode: String = "trackpad"
     @AppStorage("transport") private var transport: String = "bluetooth"
+    @AppStorage(Haptics.enabledKey) private var hapticFeedback: Bool = true
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -30,6 +31,13 @@ struct SettingsView: View {
                     }
                     Slider(value: $sensitivity, in: 0.5...3, step: 0.1)
                         .accessibilityLabel("Pointer sensitivity")
+                }
+                Section {
+                    Toggle("Haptic feedback", isOn: $hapticFeedback)
+                } header: {
+                    Text("Clicker")
+                } footer: {
+                    Text("A light tap each time a volume-button click is sent.")
                 }
                 Section("Pairing") {
                     Picker("Connection", selection: $transport) {
