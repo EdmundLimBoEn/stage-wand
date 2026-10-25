@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 rootProject.name = "StageWand"
 include(":protocol")
 include(":app")
+include(":bounded-okhttp")
