@@ -7,6 +7,10 @@ swiftc -swift-version 6 -parse-as-library -emit-module -emit-object \
   -module-name CoreBluetooth -emit-module-path "$test_dir/CoreBluetooth.swiftmodule" \
   scripts/apple-bluetooth-fakes/CoreBluetooth.swift -o "$test_dir/CoreBluetooth.o"
 link_sources=()
+# Count timeout task creation in a test-only copy, without adding production hooks.
+# Leave nonisolated cancellation handlers using the original Task initializer.
+sed '/let timeout =/,/defer { timeout/s/Task { @MainActor/trackedBluetoothTask { @MainActor/g' \
+  ios/StageWand/BluetoothClient.swift > "$test_dir/BluetoothClient.swift"
 if [[ "$(uname -s)" == "Darwin" ]]; then
   link_sources=(-D LINK_CHECK Shared/ConnectionURL.swift Shared/CommandQueue.swift
     ios/StageWand/Discovery.swift ios/StageWand/LocalSocket.swift ios/StageWand/Link.swift)
@@ -14,6 +18,6 @@ fi
 swiftc -swift-version 6 "${link_sources[@]}" -I "$test_dir" "$test_dir/CoreBluetooth.o" \
   Shared/Protocol.swift Shared/Bluetooth.swift \
   mac/Sources/AuthenticationLimiter.swift mac/Sources/PeerOwnership.swift \
-  ios/StageWand/BluetoothClient.swift mac/Sources/BluetoothServer.swift \
+  "$test_dir/BluetoothClient.swift" mac/Sources/BluetoothServer.swift \
   scripts/bluetooth-check.swift -o "$test_dir/bluetooth-check"
 "$test_dir/bluetooth-check"
