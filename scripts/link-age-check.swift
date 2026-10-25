@@ -26,6 +26,9 @@ final class SendProbe {
     func receive() async throws -> Data {
         if !authenticated {
             authenticated = true
+            // Model another Link reconnecting after a preferences notification
+            // while this one authenticates. Tests must retain their own probe.
+            _ = SendProbe()
             return Data(#"{"t":"status"}"#.utf8)
         }
         return try await withCheckedThrowingContinuation { reader = $0 }

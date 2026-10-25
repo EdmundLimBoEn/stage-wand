@@ -306,4 +306,4 @@ jobs:
           packages: "platform-tools platforms;android-35 build-tools;35.0.0"
       - name: Protocol, transport, and lint checks plus debug and unsigned release APKs
         working-directory: android
-        run: ./gradlew --no-daemon :protocol:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
+        run: ./gradlew --no-daemon :protocol:test :bounded-okhttp:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
