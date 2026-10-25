@@ -12,7 +12,8 @@ val boundedTransport by tasks.registering(Jar::class) {
     archiveBaseName.set("okhttp-4.12.0-receive-bounded")
     from(upstream.map { zipTree(it) })
     exclude("okhttp3/internal/ws/WebSocketReader*.class")
-    exclude("okhttp3/internal/ws/MessageInflater.class")
+    // Include Kotlin's generated MessageInflaterKt file facade.
+    exclude("okhttp3/internal/ws/MessageInflater*.class")
 }
 
 // The replacement reader uses upstream's internal protocol constants.
