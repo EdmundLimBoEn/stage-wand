@@ -1,6 +1,9 @@
 """Offline request and polling deadline regression tests."""
 import contextlib
+import http.client
 import io
+import signal
+import time
 import unittest
 import urllib.error
 from unittest.mock import MagicMock, patch
@@ -8,6 +11,98 @@ from unittest.mock import MagicMock, patch
 from test_asc_testflight import testflight
 
 profile = testflight.ascprofile
+
+
+class AbsoluteDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stack.enter_context(patch.object(profile, 'token', return_value='offline-test-token'))
+
+    def test_connection_is_interrupted_without_replaying_write(self):
+        def connect(*args, **kwargs):
+            time.sleep(1)
+            raise AssertionError('connection was not interrupted')
+
+        with patch.object(profile.urllib.request, 'urlopen', side_effect=connect) as opened:
+            with self.assertRaises(TimeoutError):
+                profile.call('POST', '/test', deadline=time.monotonic() + 0.1)
+        self.assertEqual(opened.call_count, 1)
+
+    def test_connection_and_trickling_body_share_one_deadline(self):
+        class TricklingBody(io.BytesIO):
+            consumed = 0
+
+            def read(self, size=-1):
+                chunks = []
+                for _ in range(size):
+                    time.sleep(0.02)
+                    chunks.append(super().read(1))
+                    self.consumed += 1
+                return b''.join(chunks)
+
+        stream = TricklingBody(b'HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n' + b' ' * 98 + b'{}')
+        sock = MagicMock()
+        sock.makefile.return_value = stream
+        response = http.client.HTTPResponse(sock)
+
+        def connect(*args, **kwargs):
+            time.sleep(0.2)
+            response.begin()
+            return response
+
+        with patch.object(profile.urllib.request, 'urlopen', side_effect=connect) as opened:
+            with self.assertRaises(TimeoutError):
+                profile.call('GET', '/test', deadline=time.monotonic() + 0.3)
+        # A fresh body-only budget would consume ~14 bytes; without a watchdog
+        # all 100 bytes arrive before the late-response check notices expiry.
+        self.assertLess(stream.consumed, 10)
+        self.assertTrue(stream.closed)
+        self.assertEqual(opened.call_count, 1)
+
+    def test_default_request_budget_interrupts_body(self):
+        real_setitimer = signal.setitimer
+
+        def shortened_timer(which, seconds, interval=0):
+            return real_setitimer(which, 0.1 if seconds == 30 else seconds, interval)
+
+        response = MagicMock()
+        response.__enter__.return_value.read.side_effect = lambda: time.sleep(1)
+        with patch.object(signal, 'setitimer', side_effect=shortened_timer) as timer, \
+                patch.object(profile.urllib.request, 'urlopen', return_value=response) as opened:
+            with self.assertRaises(TimeoutError):
+                profile.call('POST', '/test')
+        timer.assert_any_call(signal.ITIMER_REAL, 30)
+        self.assertEqual(opened.call_count, 1)
+        response.__exit__.assert_called_once()
+
+    def test_alarm_state_is_restored_on_success_and_errors(self):
+        original_handler = signal.getsignal(signal.SIGALRM)
+        original_timer = signal.getitimer(signal.ITIMER_REAL)
+        handler = lambda signum, frame: None
+        try:
+            signal.signal(signal.SIGALRM, handler)
+            for failure in (None, ValueError('invalid JSON'), TimeoutError('expired')):
+                with self.subTest(failure=failure):
+                    signal.setitimer(signal.ITIMER_REAL, 60, 5)
+                    response = MagicMock()
+                    response.__enter__.return_value.read.return_value = b'{}'
+                    response.__enter__.return_value.read.side_effect = failure
+                    with patch.object(profile.urllib.request, 'urlopen', return_value=response):
+                        if failure is None:
+                            self.assertEqual(profile.call('POST', '/test'), {})
+                        else:
+                            with self.assertRaises(type(failure)):
+                                profile.call('POST', '/test')
+                    self.assertIs(signal.getsignal(signal.SIGALRM), handler)
+                    remaining, interval = signal.getitimer(signal.ITIMER_REAL)
+                    self.assertGreater(remaining, 59)
+                    self.assertLessEqual(remaining, 60)
+                    self.assertEqual(interval, 5)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, original_handler)
+            signal.setitimer(signal.ITIMER_REAL, *original_timer)
 
 
 class DeadlineTests(unittest.TestCase):
