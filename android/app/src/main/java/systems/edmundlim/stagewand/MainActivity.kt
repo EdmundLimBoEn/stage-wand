@@ -130,8 +130,7 @@ class MainActivity : ComponentActivity() {
 
     private fun sendVolume(key: KeyName) {
         volumePresses += 1
-        link.send(Command.Key(key))
-        Haptics.tick(window.decorView)
+        if (link.send(Command.Key(key)) && settings.hapticFeedback) Haptics.click(this)
     }
 
     private fun sendCommand(command: Command) {
@@ -163,7 +162,8 @@ class MainActivity : ComponentActivity() {
             pairingCode = prefs.getString("pairingCode", "") ?: "",
             manualHost = prefs.getString("manualHost", "") ?: "",
             sensitivity = prefs.getFloat("sensitivity", 1f),
-            transport = prefs.getString("transport", "bluetooth") ?: "bluetooth"
+            transport = prefs.getString("transport", "bluetooth") ?: "bluetooth",
+            hapticFeedback = prefs.getBoolean("hapticFeedback", true)
         )
     }
 
@@ -173,6 +173,7 @@ class MainActivity : ComponentActivity() {
             .putString("manualHost", value.manualHost)
             .putFloat("sensitivity", value.sensitivity)
             .putString("transport", value.transport)
+            .putBoolean("hapticFeedback", value.hapticFeedback)
             .apply()
     }
 

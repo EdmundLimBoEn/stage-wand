@@ -42,6 +42,13 @@ class SettingsTest {
         }
     }
 
+    @Test
+    fun hapticFeedbackDefaultsOnAndSurvivesDeepLink() {
+        assertTrue(Settings().hapticFeedback)
+        val off = saved.copy(hapticFeedback = false)
+        assertFalse(off.withDeepLink(deepLink("https://other.example")).hapticFeedback)
+    }
+
     private fun deepLink(destination: String) =
         "stagewand://connect?url=" + URLEncoder.encode(destination, "UTF-8")
 }

@@ -6,7 +6,8 @@ data class Settings(
     val pairingCode: String = "",
     val manualHost: String = "",
     val sensitivity: Float = 1f,
-    val transport: String = "bluetooth"
+    val transport: String = "bluetooth",
+    val hapticFeedback: Boolean = true
 ) {
     fun withDeepLink(uri: String): Settings {
         val destination = ConnectionURL.pairingDestination(uri) ?: return this

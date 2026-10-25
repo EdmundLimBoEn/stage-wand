@@ -117,14 +117,17 @@ class Link(
         connect()
     }
 
-    fun send(command: Command) {
-        if (closed) return
-        when (command) {
-            is Command.Auth -> return
-            is Command.Move -> if (state == State.Authed && (command.dx != 0.0 || command.dy != 0.0) && command.dx.isFinite() && command.dy.isFinite()) enqueue(command)
-            is Command.Scroll -> if (state == State.Authed && command.dx.isFinite() && command.dy.isFinite()) enqueue(command)
-            is Command.Key, is Command.Click, is Command.Chord -> if (state == State.Authed) enqueue(command)
+    /** Returns true when the command was queued for the computer. */
+    fun send(command: Command): Boolean {
+        if (closed) return false
+        val accepted = when (command) {
+            is Command.Auth -> false
+            is Command.Move -> state == State.Authed && (command.dx != 0.0 || command.dy != 0.0) && command.dx.isFinite() && command.dy.isFinite()
+            is Command.Scroll -> state == State.Authed && command.dx.isFinite() && command.dy.isFinite()
+            is Command.Key, is Command.Click, is Command.Chord -> state == State.Authed
         }
+        if (accepted) enqueue(command)
+        return accepted
     }
 
     private fun connect() {

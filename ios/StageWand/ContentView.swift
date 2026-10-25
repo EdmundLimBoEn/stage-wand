@@ -184,8 +184,8 @@ struct ContentView: View {
     }
 
     private func sendVolume(_ command: Command) {
-        link.send(command)
-        Haptics.tick()
+        guard link.send(command) else { return }
+        Haptics.click()
     }
 
     private func send(_ command: Command) {

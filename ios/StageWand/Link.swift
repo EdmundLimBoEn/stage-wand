@@ -88,19 +88,25 @@ final class Link: ObservableObject {
         refreshSettings(force: true)
     }
 
-    func send(_ command: Command) {
+    /// Returns true when the command was queued for the computer (or buffered while reconnecting).
+    @discardableResult
+    func send(_ command: Command) -> Bool {
         switch command {
-        case .auth: return
+        case .auth: return false
         case .move(let dx, let dy), .scroll(let dx, let dy):
-            guard state == .authed, dx.isFinite, dy.isFinite else { return }
+            guard state == .authed, dx.isFinite, dy.isFinite else { return false }
             if dx != 0 || dy != 0 { enqueue(command) }
+            return true
         case .key, .click, .chord:
             if state == .authed {
                 enqueue(command)
+                return true
             } else if state == .searching || state == .disconnected || isConnecting {
                 if buffered.count == 8 { buffered.removeFirst() }
                 buffered.append((command, .now))
+                return true
             }
+            return false
         }
     }
 

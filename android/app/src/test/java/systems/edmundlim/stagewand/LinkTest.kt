@@ -89,7 +89,7 @@ class LinkTest {
     @Test
     fun authenticationPrecedesCommandsAndDisconnectedInputIsNotReplayed() {
         start()
-        link.send(Command.Key(KeyName.Right))
+        assertFalse("unsent clicks must not report success (no haptic)", link.send(Command.Key(KeyName.Right)))
         attempts.single().ready()
         drain()
         verify(bluetooth).send(Command.Auth("1234"))
@@ -98,6 +98,7 @@ class LinkTest {
         drain()
         assertEquals(Link.State.Authed, link.state)
         verify(bluetooth, never()).send(Command.Key(KeyName.Right))
+        assertTrue(link.send(Command.Key(KeyName.Left)))
         link.send(Command.Key(KeyName.Right))
         verify(bluetooth).send(Command.Key(KeyName.Right))
     }
