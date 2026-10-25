@@ -116,10 +116,11 @@ struct LinkAgeCheck {
             try await Task.sleep(for: .milliseconds(1400))
         }
         link.start()
-        // start() creates this transport synchronously. Older Links can react to
-        // the preference changes and replace latest as soon as we suspend.
+        // Capture before yielding: settings notifications can reconnect older
+        // Links and replace the global latest probe while authentication runs.
         let probe = SendProbe.latest!
         try await waitUntil { link.state == .authed }
+        precondition(probe.authenticated && !probe.cancelled, "Expected this Link's authenticated transport")
         return (link, probe)
     }
 
@@ -154,6 +155,7 @@ struct LinkAgeCheck {
             link.start()
             let fresh = SendProbe.latest!
             try await waitUntil { link.state == .authed }
+            precondition(fresh.authenticated && !fresh.cancelled, "Expected the reconnected transport")
             fresh.hold = false
             try await Task.sleep(for: .milliseconds(30))
             precondition(fresh.commands.isEmpty)
