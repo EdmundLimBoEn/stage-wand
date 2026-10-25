@@ -1,6 +1,15 @@
 import Foundation
 import CoreBluetooth
 
+@MainActor private var bluetoothTaskCount = 0
+
+// The harness instruments timeout task initializers in its copy of BluetoothClient.
+@MainActor
+func trackedBluetoothTask(_ operation: @escaping @MainActor @Sendable () async -> Void) -> Task<Void, Never> {
+    bluetoothTaskCount += 1
+    return Task { await operation() }
+}
+
 @MainActor
 final class Session {
     let code = "4567"
@@ -253,13 +262,18 @@ struct BluetoothCheck {
         client.start()
         let (_, peripheral, _) = ready(client)
         let data = try JSONEncoder().encode(Command.key(.right))
+        let tasksBefore = bluetoothTaskCount
+        try await client.send(data)
+        precondition(bluetoothTaskCount == tasksBefore, "Send without a deadline allocated a timeout task")
+        precondition(peripheral.writes == [data])
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(200))
         try await client.send(data, deadline: deadline)
+        precondition(bluetoothTaskCount == tasksBefore + 1, "Send with a deadline must create a timeout task")
         peripheral.canSendWriteWithoutResponse = false
         let blocked = Task { try await client.send(data, deadline: deadline) }
         await assertFailure(blocked, "absolute backlog deadline with pending write")
         precondition(peripheral.delegate == nil)
-        precondition(peripheral.writes == [data])
+        precondition(peripheral.writes == [data, data])
 
         client.start()
         let (_, next, _) = ready(client)
