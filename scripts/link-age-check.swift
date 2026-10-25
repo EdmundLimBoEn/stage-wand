@@ -113,8 +113,12 @@ struct LinkAgeCheck {
             try await Task.sleep(for: .milliseconds(1400))
         }
         link.start()
+        // Capture before yielding: settings notifications can reconnect older
+        // Links and replace the global latest probe while authentication runs.
+        let probe = SendProbe.latest!
         try await waitUntil { link.state == .authed }
-        return (link, SendProbe.latest!)
+        precondition(probe.authenticated && !probe.cancelled, "Expected this Link's authenticated transport")
+        return (link, probe)
     }
 
     // Delay the main actor to exercise expiry before the sender can dispatch.
@@ -146,8 +150,9 @@ struct LinkAgeCheck {
 
             // Reconnecting must not replay expired input; a drained backlog gets a new budget.
             link.start()
-            try await waitUntil { link.state == .authed }
             let fresh = SendProbe.latest!
+            try await waitUntil { link.state == .authed }
+            precondition(fresh.authenticated && !fresh.cancelled, "Expected the reconnected transport")
             fresh.hold = false
             try await Task.sleep(for: .milliseconds(30))
             precondition(fresh.commands.isEmpty)
