@@ -63,20 +63,26 @@ def status():
 
 
 def ensure(version, number, group_name):
-    deadline = time.time() + 45 * 60
+    deadline = time.monotonic() + 45 * 60
+    state = "NOT_FOUND"
     while True:
+        if time.monotonic() >= deadline:
+            sys.exit(f"::error::Build {version} ({number}) still {state} after 45 minutes.")
         query = urllib.parse.urlencode({"filter[app]": APP, "filter[version]": number,
                                         "filter[preReleaseVersion.version]": version, "limit": 1})
-        found = call("GET", "/v1/builds?" + query)["data"]
+        try:
+            found = call("GET", "/v1/builds?" + query, deadline=deadline)["data"]
+        except TimeoutError:
+            sys.exit(f"::error::Timed out waiting for build {version} ({number}) in App Store Connect.")
         state = found[0]["attributes"]["processingState"] if found else "NOT_FOUND"
         print(f"Build {version} ({number}): {state}")
         if state == "VALID":
             break
         if state in ("FAILED", "INVALID"):
             sys.exit(f"::error::Build {version} ({number}) is {state} in App Store Connect.")
-        if time.time() > deadline:
+        if time.monotonic() >= deadline:
             sys.exit(f"::error::Build {version} ({number}) still {state} after 45 minutes.")
-        time.sleep(30)
+        time.sleep(max(0, min(30, deadline - time.monotonic())))
     build = found[0]
     if build["attributes"].get("usesNonExemptEncryption") is None:
         call("PATCH", f"/v1/builds/{build['id']}", {"data": {"type": "builds", "id": build["id"],

@@ -48,15 +48,40 @@ def token():
     return (signing_input + b"." + b64url(der_to_raw(der))).decode()
 
 
-def call(method, path, body=None):
-    request = urllib.request.Request(API + path, method=method,
-                                     data=json.dumps(body).encode() if body is not None else None,
-                                     headers={"Authorization": "Bearer " + token(), "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(request) as response:
-            return json.loads(response.read() or b"{}")
-    except urllib.error.HTTPError as error:
-        sys.exit(f"::error::App Store Connect API {method} {path.split('?')[0]} failed: {error.code} {error.read().decode()[:600]}")
+def call(method, path, body=None, *, deadline=None):
+    # Retry reads only: a timed-out write may already have been applied by Apple.
+    attempts = 3 if method == "GET" else 1
+    for attempt in range(attempts):
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("App Store Connect polling deadline expired")
+        request = urllib.request.Request(API + path, method=method,
+                                         data=json.dumps(body).encode() if body is not None else None,
+                                         headers={"Authorization": "Bearer " + token(), "Content-Type": "application/json"})
+        timeout = 30 if deadline is None else min(30, deadline - time.monotonic())
+        if timeout <= 0:
+            raise TimeoutError("App Store Connect polling deadline expired")
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                result = json.loads(response.read() or b"{}")
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("App Store Connect polling deadline expired")
+            return result
+        except urllib.error.HTTPError as error:
+            transient = error.code in (429, 500, 502, 503, 504)
+            # Do not wait for an error body before enforcing the retry budget.
+            error.close()
+            if not transient or attempt == attempts - 1:
+                sys.exit(f"::error::App Store Connect API {method} {path.split('?')[0]} failed: {error.code}")
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == attempts - 1:
+                raise
+        delay = 2 ** attempt
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("App Store Connect polling deadline expired")
+            delay = min(delay, remaining)
+        time.sleep(delay)
 
 
 def main():
